@@ -11,6 +11,7 @@
 
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 
 /** @typedef {'iso'|'iso-back'|'front'|'back'|'left'|'right'|'top'|'bottom'} StandardView */
 
@@ -176,6 +177,16 @@ export function addThreeGeometry(group, geo, color = 0x3a7bd5, opacity = 0.92) {
     transparent: true,
     opacity,
   })
+  // CAD kernels tessellate each B-Rep face independently, so vertices at a
+  // shared edge between two faces are duplicated rather than shared — flat
+  // per-triangle normals at that seam can then point every which way, and a
+  // triangle whose normal happens to face away from every light renders
+  // near-black. That reads as a hole even on a fully watertight mesh (this
+  // one was verified watertight: 0 boundary/non-manifold edges). Welding
+  // near-coincident vertices before computing normals lets normals average
+  // across the seam instead, for smooth (not flat-faceted) shading there.
+  mergeVertices(geo.faces)
+  geo.faces.computeVertexNormals()
   const faceMesh = new THREE.Mesh(geo.faces, faceMat)
   faceMesh.castShadow = true
   faceMesh.receiveShadow = true

@@ -116,6 +116,36 @@ reference to wherever you cloned/placed it):
 }
 ```
 
+**If you're on Vite**, also add this — without it you will very likely load
+*two* three.js instances (one from your project, one from `ai-cad`'s own
+resolution as a symlinked package), which breaks anything that does
+`instanceof THREE.X` across the boundary (e.g. `BufferGeometryUtils`
+functions silently no-op on a geometry your project created). Watch dev-tools
+console for "Multiple instances of Three.js being imported" — if you see it,
+this is why:
+
+```ts
+// vite.config.ts
+export default defineConfig({
+  resolve: { preserveSymlinks: true },
+})
+```
+
+Also don't install a physical copy of `three` inside `ai-cad`'s own
+`node_modules` (delete it if `npm install` puts one there to satisfy the
+peerDependency) — a local copy there is resolved *before* your project's,
+recreating the same duplicate-instance problem `preserveSymlinks` is meant to
+avoid.
+
+**Vite will not live-reload edits to `ai-cad`'s own source** the way it
+reloads your project's `src/` — a `file:`-linked package outside your
+project root isn't watched the same way. If you edit `ai-cad` and a change
+doesn't seem to take effect, check for a `page reload …ai-cad/src/…` line in
+the dev server's terminal output; if there isn't one, kill the dev server,
+delete `node_modules/.vite`, and restart it before concluding the change had
+no effect. (This cost real time in this project's history — see
+`gc-cad/PARTS.md`'s "Known issues" table for the investigation it derailed.)
+
 Then create `ai-cad.config.mjs` in your project (wherever you'll run the
 capture commands from — typically next to your `package.json`):
 
