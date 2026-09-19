@@ -1,0 +1,22 @@
+{
+  "name": "ai-cad",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Project-agnostic viewer bootstrap + screenshot/contact-sheet capture harness for reviewing three.js-based parametric CAD models (built for replicad, not coupled to it).",
+  "main": "src/viewer.js",
+  "exports": {
+    ".": "./src/viewer.js"
+  },
+  "bin": {
+    "ai-cad-capture": "./capture/capture.mjs",
+    "ai-cad-contact-sheet": "./capture/contact-sheet.mjs"
+  },
+  "peerDependencies": {
+    "three": ">=0.160.0"
+  },
+  "dependencies": {
+    "playwright": "^1.63.0",
+    "sharp": "^0.34.0"
+  }
+}
