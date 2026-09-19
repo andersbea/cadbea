@@ -3,7 +3,7 @@
 A small, project-agnostic toolkit for reviewing a parametric CAD model built
 with three.js (written for [replicad](https://replicad.xyz/) projects, but
 not coupled to replicad specifically — anything that puts meshes into a
-three.js scene works). Two pieces:
+three.js scene works). Three pieces:
 
 1. **`src/viewer.js`** — a generic viewer bootstrap (scene, camera, controls,
    lighting) plus bounding-box-derived standard camera views, so you don't
@@ -11,6 +11,13 @@ three.js scene works). Two pieces:
 2. **`capture/`** — a Playwright-based CLI that drives that viewer headlessly
    to produce screenshots and multi-angle "contact sheet" grids, for a human
    or an AI agent to actually look at before calling a model change done.
+3. **`capture/check.mjs`** — a deterministic watertightness check on the
+   actual tessellated mesh, for catching (or ruling out) a real geometric gap
+   without relying on judging it from a picture. See "Deterministic geometry
+   checks" below — this exists because a screenshot review session on this
+   toolkit's own first project spent a long time chasing what turned out to
+   be a rendering artifact, and a longer time before that failing to notice a
+   real gap that a translucent material was hiding.
 
 Extracted from `gc-cad/replicad` in the guardianchain-labs project once it
 became clear the viewer/capture code had no enclosure-specific logic in it —
@@ -29,6 +36,39 @@ project defines), is what actually lets an agent — or a person skimming
 quickly — catch a real problem instead of an optical illusion. `--view=` /
 `--state=` narrow back down to one full-resolution shot once something looks
 worth a closer look.
+
+## Deterministic geometry checks
+
+Screenshots — even a full contact sheet — are a judgment call: a translucent
+material can make a real gap invisible, or make a fully watertight mesh
+*look* like it has a hole (a flat-shaded triangle at the tessellation seam
+between two independently-meshed B-Rep faces can render near-black from
+some angles even though it's completely connected on both sides — this
+toolkit hit exactly that case). Current research on LLM/agent-driven CAD
+generation is consistent on the fix: pair visual review with a deterministic,
+non-LLM geometric check, rather than trusting a picture (or a language model
+looking at a picture) either way — see
+[caliper-cad](https://github.com/danielesalpietro/caliper-cad) and
+[CADSmith](https://arxiv.org/html/2603.26512) for two current approaches to
+staged, programmatic validation of LLM-generated CAD geometry.
+
+`checkGeometry()` (also exposed as `checkWatertight()`) does the CAD-kernel
+version of that: it welds near-coincident vertices in each visible mesh's
+*already-tessellated* geometry, then checks that every edge is shared by
+exactly 2 triangles (closed, manifold) rather than 1 (a real boundary/gap) or
+more than 2 (non-manifold). It works on whatever mesh is already in the
+scene, so it has no dependency on replicad or any other specific modeler —
+useful because most JS-facing CAD kernels (replicad included) don't expose
+their native B-Rep validity checker (OpenCascade's `BRepCheck`) to
+JavaScript, so this mesh-level check is the practical fallback.
+
+```bash
+npm run check                # every declared state; exits non-zero on any real gap
+```
+
+Reach for this *before* spending a long time trying to explain a suspicious
+screenshot with geometry changes — it settles "is this actually a hole"
+immediately, in either direction.
 
 ## The `window.__aiCadViewer` contract
 
@@ -49,6 +89,15 @@ interface AiCadViewer {
   render(): void                   // force a render (used before each screenshot)
   setView(view: StandardView): void  // camera placement, derived from modelGroup's current visible bounding box
   setState(name: string | null): void  // turns `name` on and every other declared state off; null clears all
+  checkGeometry(options?: { tolerance?: number }): CheckResult[]  // watertightness, see "Deterministic geometry checks"
+}
+
+interface CheckResult {
+  name: string             // from addThreeGeometry(..., name) — "(unnamed)" if you didn't pass one
+  triangleCount: number
+  boundaryEdges: number     // > 0 means a real gap
+  nonManifoldEdges: number  // > 0 means non-manifold geometry (an edge shared by 3+ triangles)
+  watertight: boolean       // boundaryEdges === 0 && nonManifoldEdges === 0
 }
 ```
 
@@ -98,7 +147,9 @@ const viewer = createViewer(canvas)
 // convention-agnostic and just measures whatever's actually in the scene:
 viewer.modelGroup.rotation.x = -Math.PI / 2
 
-// ... build your model, addThreeGeometry(viewer.modelGroup, ...) for each part ...
+// ... build your model — name each part so a checkGeometry() failure is
+// actionable instead of an anonymous index:
+addThreeGeometry(viewer.modelGroup, bodyGeo, 0x2a6db5, 0.92, 'body')
 
 viewer.states = { exploded: setExploded, section: setSection }
 viewer.setView('iso')     // a sane initial camera, instead of hand-picked numbers
@@ -168,7 +219,8 @@ And wire up npm scripts pointing at wherever you placed this toolkit:
 {
   "scripts": {
     "views": "node ../../ai-cad/capture/capture.mjs",
-    "contact-sheet": "node ../../ai-cad/capture/contact-sheet.mjs"
+    "contact-sheet": "node ../../ai-cad/capture/contact-sheet.mjs",
+    "check": "node ../../ai-cad/capture/check.mjs"
   }
 }
 ```
@@ -178,6 +230,8 @@ And wire up npm scripts pointing at wherever you placed this toolkit:
 Requires your project's dev server already running.
 
 ```bash
+npm run check                          # deterministic watertightness check, every declared state
+
 npm run views                          # every standard + extra view, full resolution
 npm run views -- --view=iso,section    # a subset
 npm run views -- --state=exploded      # apply a declared state to the standard views
@@ -197,3 +251,13 @@ npm run contact-sheet -- --view=iso,top,left,right   # override the angle set fo
   shot before concluding there's a real problem.
 - No TypeScript build step yet (plain JS + JSDoc). Fine for a Vite consumer
   that processes source directly; revisit if this needs to ship compiled.
+- `checkGeometry`'s default weld tolerance (1e-4, in your model's units) is a
+  reasonable default for millimeter-scale parts but is not derived from
+  anything — pass `{ tolerance }` if your model's scale or precision needs
+  differ.
+- `checkGeometry` checks the mesh already in the scene, at whatever
+  `tolerance`/`angularTolerance` your project meshed it with — it can't
+  catch a gap smaller than that tessellation's own resolution. It also only
+  proves the *tessellated* mesh is watertight, not the underlying B-Rep
+  (though the two should agree in practice; a B-Rep with a genuine gap
+  should tessellate into a mesh with matching boundary edges).

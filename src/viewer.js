@@ -56,6 +56,75 @@ export function visibleBoundingBox(root) {
 }
 
 /**
+ * Welds vertices within `tolerance` and counts, per edge, how many triangles
+ * reference it. A closed, manifold solid has every edge shared by exactly 2
+ * triangles — 1 means a real gap (boundary edge), >2 means non-manifold
+ * geometry. This is the deterministic check to reach for instead of judging
+ * holes from a screenshot: a translucent material or an unlucky viewing
+ * angle can make a real gap invisible, or make a perfectly watertight mesh
+ * *look* like it has one (a flat-shaded triangle at a tessellation seam
+ * between two independently-meshed B-Rep faces can render near-black and
+ * read as a hole even though it's fully connected on both sides).
+ * @param {THREE.BufferGeometry} geometry
+ * @param {number} tolerance
+ */
+function checkGeometryWatertight(geometry, tolerance) {
+  const pos = geometry.attributes.position
+  const index = geometry.index
+
+  const key = (x, y, z) => `${Math.round(x / tolerance)},${Math.round(y / tolerance)},${Math.round(z / tolerance)}`
+  const vmap = new Map()
+  const weldedId = new Int32Array(pos.count)
+  for (let i = 0; i < pos.count; i++) {
+    const k = key(pos.getX(i), pos.getY(i), pos.getZ(i))
+    if (!vmap.has(k)) vmap.set(k, vmap.size)
+    weldedId[i] = vmap.get(k)
+  }
+
+  const edgeCount = new Map()
+  const addEdge = (a, b) => {
+    const k = a < b ? `${a}_${b}` : `${b}_${a}`
+    edgeCount.set(k, (edgeCount.get(k) || 0) + 1)
+  }
+
+  const triangleCount = index ? index.count / 3 : pos.count / 3
+  const vertexAt = (t) => (index ? index.getX(t) : t)
+  for (let t = 0; t < triangleCount; t++) {
+    const a = weldedId[vertexAt(t * 3)]
+    const b = weldedId[vertexAt(t * 3 + 1)]
+    const c = weldedId[vertexAt(t * 3 + 2)]
+    addEdge(a, b); addEdge(b, c); addEdge(c, a)
+  }
+
+  let boundaryEdges = 0
+  let nonManifoldEdges = 0
+  for (const count of edgeCount.values()) {
+    if (count === 1) boundaryEdges++
+    else if (count > 2) nonManifoldEdges++
+  }
+
+  return { triangleCount, boundaryEdges, nonManifoldEdges, watertight: boundaryEdges === 0 && nonManifoldEdges === 0 }
+}
+
+/**
+ * Runs {@link checkGeometryWatertight} on every currently-visible mesh under
+ * `root`. Name each mesh (`addThreeGeometry(..., name)`) so a failure is
+ * actionable instead of an anonymous index.
+ * @param {THREE.Object3D} root
+ * @param {{ tolerance?: number }} [options]
+ * @returns {Array<{ name: string, triangleCount: number, boundaryEdges: number, nonManifoldEdges: number, watertight: boolean }>}
+ */
+export function checkWatertight(root, options = {}) {
+  const tolerance = options.tolerance ?? 1e-4
+  const results = []
+  root.traverse((obj) => {
+    if (!obj.isMesh || !obj.visible) return
+    results.push({ name: obj.name || '(unnamed)', ...checkGeometryWatertight(obj.geometry, tolerance) })
+  })
+  return results
+}
+
+/**
  * Camera position + orbit target for a standard view, framed to the given
  * bounding box.
  * @param {THREE.Box3} box
@@ -157,6 +226,10 @@ export function createViewer(canvas, options = {}) {
       // replaces this property with a new object.
       for (const [key, fn] of Object.entries(this.states)) fn(key === name)
     },
+    /** @param {{ tolerance?: number }} [options] */
+    checkGeometry(options) {
+      return checkWatertight(modelGroup, options)
+    },
   }
 
   return viewer
@@ -167,8 +240,11 @@ export function createViewer(canvas, options = {}) {
  * so the caller can toggle visibility or drive an animation (e.g. exploding).
  * @param {THREE.Group} group
  * @param {{ faces: THREE.BufferGeometry, lines: THREE.BufferGeometry }} geo
+ * @param {number} [color]
+ * @param {number} [opacity]
+ * @param {string} [name] - identifies this part in checkGeometry() results; use your PARTS.md/naming-registry name
  */
-export function addThreeGeometry(group, geo, color = 0x3a7bd5, opacity = 0.92) {
+export function addThreeGeometry(group, geo, color = 0x3a7bd5, opacity = 0.92, name = '') {
   const faceMat = new THREE.MeshPhongMaterial({
     color,
     specular: 0x224488,
@@ -188,6 +264,7 @@ export function addThreeGeometry(group, geo, color = 0x3a7bd5, opacity = 0.92) {
   mergeVertices(geo.faces)
   geo.faces.computeVertexNormals()
   const faceMesh = new THREE.Mesh(geo.faces, faceMat)
+  faceMesh.name = name
   faceMesh.castShadow = true
   faceMesh.receiveShadow = true
   group.add(faceMesh)

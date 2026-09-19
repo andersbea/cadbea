@@ -10,7 +10,8 @@
   },
   "bin": {
     "ai-cad-capture": "./capture/capture.mjs",
-    "ai-cad-contact-sheet": "./capture/contact-sheet.mjs"
+    "ai-cad-contact-sheet": "./capture/contact-sheet.mjs",
+    "ai-cad-check": "./capture/check.mjs"
   },
   "peerDependencies": {
     "three": ">=0.160.0"
