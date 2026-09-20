@@ -141,6 +141,53 @@ export function computeStandardView(box, view) {
   return { position, target: center }
 }
 
+/** @typedef {'corner-tl'|'corner-tr'|'corner-bl'|'corner-br'} CornerView */
+
+/** @type {CornerView[]} */
+export const CORNER_VIEWS = ['corner-tl', 'corner-tr', 'corner-bl', 'corner-br']
+
+// [sign of X, sign of Z] for each of the box's 4 top vertices.
+const CORNER_SIGNS = {
+  'corner-tl': [-1, -1],
+  'corner-tr': [1, -1],
+  'corner-bl': [-1, 1],
+  'corner-br': [1, 1],
+}
+
+/**
+ * A close, elevated view looking down at one *top* corner of the bounding
+ * box — for spotting a small defect (a gap, a tessellation artifact) that a
+ * standard whole-model view is too coarse to show. This project's own
+ * history is the reason this exists: a real corner defect was missed by
+ * every standard view, and chasing it down needed a hand-aimed close-up
+ * camera. Distance scales with the box's horizontal size, not its full
+ * diagonal, so it stays a genuine close-up regardless of overall model size.
+ * @param {THREE.Box3} box
+ * @param {CornerView} corner
+ */
+export function computeCornerView(box, corner) {
+  const signs = CORNER_SIGNS[corner]
+  if (!signs) throw new Error(`Unknown corner view "${corner}". Known: ${CORNER_VIEWS.join(', ')}`)
+  const [sx, sz] = signs
+  const cornerPoint = new THREE.Vector3(
+    sx > 0 ? box.max.x : box.min.x,
+    box.max.y,
+    sz > 0 ? box.max.z : box.min.z,
+  )
+  const size = box.getSize(new THREE.Vector3())
+  const closeDistance = Math.max(Math.min(size.x, size.z) * 0.5, 1)
+  // Steep (near-top-down, not a 3/4 iso-ish angle): a shallower elevation
+  // hid a real defect at 2 of 4 corners in this project's own history —
+  // some artifacts are only visible from close to directly above.
+  const dir = new THREE.Vector3(sx * 0.35, 1, sz * 0.35).normalize()
+  const position = cornerPoint.clone().addScaledVector(dir, closeDistance)
+  // Look slightly past the corner (inward and down) so it sits inside the
+  // frame instead of exactly at its edge.
+  const inward = new THREE.Vector3(-sx, -0.4, -sz).normalize()
+  const target = cornerPoint.clone().addScaledVector(inward, closeDistance * 0.25)
+  return { position, target }
+}
+
 /**
  * @param {HTMLCanvasElement} canvas
  * @param {{ background?: number, grid?: boolean }} [options]
@@ -211,10 +258,12 @@ export function createViewer(canvas, options = {}) {
     render() {
       renderer.render(scene, camera)
     },
-    /** @param {StandardView} view */
+    /** @param {StandardView | CornerView} view */
     setView(view) {
       const box = visibleBoundingBox(modelGroup)
-      const { position, target } = computeStandardView(box, view)
+      const { position, target } = CORNER_VIEWS.includes(view)
+        ? computeCornerView(box, view)
+        : computeStandardView(box, view)
       camera.position.copy(position)
       controls.target.copy(target)
       controls.update()

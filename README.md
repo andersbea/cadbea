@@ -87,7 +87,7 @@ interface AiCadViewer {
   ready: boolean                   // capture.mjs waits for this to become true
   states: Record<string, (on: boolean) => void>   // e.g. { exploded: fn, section: fn }
   render(): void                   // force a render (used before each screenshot)
-  setView(view: StandardView): void  // camera placement, derived from modelGroup's current visible bounding box
+  setView(view: StandardView | CornerView): void  // camera placement, derived from modelGroup's current visible bounding box
   setState(name: string | null): void  // turns `name` on and every other declared state off; null clears all
   checkGeometry(options?: { tolerance?: number }): CheckResult[]  // watertightness, see "Deterministic geometry checks"
 }
@@ -118,6 +118,21 @@ deliberately axis-aligned and physically meaningless: your model's actual
 That's fine — they're for scanning multiple angles quickly, not for a view
 tied to one physical feature. If you need the latter, add it as a project
 `extraView` (below) with a hand-picked camera position.
+
+### Corner views
+
+`CORNER_VIEWS = ['corner-tl', 'corner-tr', 'corner-bl', 'corner-br']`
+
+A close, elevated shot looking down at each *top* corner of the bounding
+box — distance scales with the box's own horizontal size, so it stays a
+genuine close-up regardless of model size. These exist because a standard
+view is framed to the whole model and is too coarse to show a small defect
+(a gap, a bad fillet/chamfer/fuse interaction) right at a corner — this
+toolkit's own first real project spent a long debugging session on exactly
+that before someone looked at a hand-aimed close-up camera and found it in
+seconds. Same contract as standard views (`setView('corner-tl')`,
+`ai-cad-capture --view=corner-tl`, `ai-cad-contact-sheet --corners` for all
+four in one grid).
 
 ### States
 
@@ -205,7 +220,7 @@ export default {
   url: 'http://localhost:5173',       // your dev server
   outDir: './screenshots/latest',     // overwritten on every run
   title: 'My Enclosure',              // optional, used as the contact-sheet banner
-  contactViews: ['iso', 'top', 'front', 'left'],  // optional, defaults to iso/iso-back/top/front
+  contactViews: ['iso', 'top', 'front', 'left'],  // optional, defaults to all 8 standard views
   extraViews: [                        // optional, project-specific camera shots
     { name: 'usb-face', camera: [-120, 15, -27], target: [29, 9, -27] },
     { name: 'my-section', camera: [50, 60, 40], target: [29, 9, -27], state: 'section' },
@@ -232,12 +247,13 @@ Requires your project's dev server already running.
 ```bash
 npm run check                          # deterministic watertightness check, every declared state
 
-npm run views                          # every standard + extra view, full resolution
-npm run views -- --view=iso,section    # a subset
-npm run views -- --state=exploded      # apply a declared state to the standard views
+npm run views                          # every standard + corner + extra view, full resolution
+npm run views -- --view=iso,corner-tl  # a subset
+npm run views -- --state=exploded      # apply a declared state to the standard/corner views
 
-npm run contact-sheet                  # one grid per state: default, exploded, section, …
-npm run contact-sheet -- --view=iso,top,left,right   # override the angle set for the grids
+npm run contact-sheet                  # one overview grid per state (all 8 standard views)
+npm run contact-sheet -- --corners     # one close-up grid per state (all 4 corner views)
+npm run contact-sheet -- --view=iso,top,left,right   # override the angle set explicitly
 ```
 
 ## Known limitations

@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
  * Captures one PNG per requested view — the 8 generic bounding-box-derived
- * standard views, plus any project-specific `extraViews` from the project's
- * ai-cad.config.mjs. For a fast multi-angle scan across states, use
- * contact-sheet.mjs instead; use this for a full-resolution look at one view.
+ * standard views, the 4 generic top-corner close-ups, plus any
+ * project-specific `extraViews` from the project's ai-cad.config.mjs. For a
+ * fast multi-angle scan across states, use contact-sheet.mjs instead; use
+ * this for a full-resolution look at one view.
  *
  * Usage (from a project directory with its dev server running):
- *   ai-cad-capture                          # all standard + extra views, baseline state
+ *   ai-cad-capture                          # all standard + corner + extra views, baseline state
  *   ai-cad-capture --view=iso,front         # subset (by name)
- *   ai-cad-capture --state=exploded         # apply a declared state to all standard views
+ *   ai-cad-capture --state=exploded         # apply a declared state to all standard/corner views
  *   ai-cad-capture --config=./ai-cad.config.mjs --out=./screenshots/latest
  */
 
@@ -18,9 +19,11 @@ import { writeFile } from 'fs/promises'
 import { openViewer, setView, setCamera, setState, screenshotBuffer } from './lib/browser.mjs'
 import { parseArgs, loadConfig } from './lib/config.mjs'
 
-// Keep in sync with STANDARD_VIEWS in ../src/viewer.js — duplicated as plain
-// strings so this Node-side script never needs to import three.js.
+// Keep in sync with STANDARD_VIEWS/CORNER_VIEWS in ../src/viewer.js —
+// duplicated as plain strings so this Node-side script never needs to
+// import three.js. Both route through the same viewer.setView(name).
 const STANDARD_VIEWS = ['iso', 'iso-back', 'front', 'back', 'left', 'right', 'top', 'bottom']
+const CORNER_VIEWS = ['corner-tl', 'corner-tr', 'corner-bl', 'corner-br']
 
 async function main() {
   const args = parseArgs()
@@ -32,12 +35,12 @@ async function main() {
   const only = args.view ? new Set(String(args.view).split(',').map((s) => s.trim())) : null
 
   const views = [
-    ...STANDARD_VIEWS.map((name) => ({ name, kind: 'standard', state: args.state ?? null })),
+    ...[...STANDARD_VIEWS, ...CORNER_VIEWS].map((name) => ({ name, kind: 'standard', state: args.state ?? null })),
     ...extraViews.map((v) => ({ ...v, kind: 'extra' })),
   ].filter((v) => !only || only.has(v.name))
 
   if (views.length === 0) {
-    const known = [...STANDARD_VIEWS, ...extraViews.map((v) => v.name)]
+    const known = [...STANDARD_VIEWS, ...CORNER_VIEWS, ...extraViews.map((v) => v.name)]
     console.error(`No matching views. Known: ${known.join(', ')}`)
     process.exit(1)
   }
