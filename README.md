@@ -1,4 +1,17 @@
-# ai-cad
+# cadbea
+
+## Runnable example
+
+The [GC CAD enclosure](example/gc-cad/README.md) is a real TypeScript/Replicad
+consumer and integration fixture. Install root dependencies with `npm ci`, then
+run `npm --prefix example/gc-cad/replicad ci` and `npm run example:dev`.
+`npm run example:build` builds the viewer and printable parts;
+`npm run example:test` runs browser validation (install Chromium first with
+`npx playwright install chromium`). See the example README for known model issues.
+
+The example's AI review panel demonstrates the current selection contract:
+click a visible named part to highlight it, add a note, and inspect the
+serializable `window.__cadbeaViewer.getReviewState()` result.
 
 A small, project-agnostic toolkit for reviewing a parametric CAD model built
 with three.js (written for [replicad](https://replicad.xyz/) projects, but
@@ -70,15 +83,15 @@ Reach for this *before* spending a long time trying to explain a suspicious
 screenshot with geometry changes — it settles "is this actually a hole"
 immediately, in either direction.
 
-## The `window.__aiCadViewer` contract
+## The `window.__cadbeaViewer` contract
 
 A consuming project's viewer entry point builds this object (via
 `createViewer()` from `src/viewer.js`, or by hand if you need something
-`createViewer` doesn't provide) and assigns it to `window.__aiCadViewer` once
+`createViewer` doesn't provide) and assigns it to `window.__cadbeaViewer` once
 the model is loaded and meshed:
 
 ```ts
-interface AiCadViewer {
+interface CadbeaViewer {
   scene: THREE.Scene
   camera: THREE.PerspectiveCamera
   controls: OrbitControls
@@ -90,6 +103,56 @@ interface AiCadViewer {
   setView(view: StandardView | CornerView): void  // camera placement, derived from modelGroup's current visible bounding box
   setState(name: string | null): void  // turns `name` on and every other declared state off; null clears all
   checkGeometry(options?: { tolerance?: number }): CheckResult[]  // watertightness, see "Deterministic geometry checks"
+  selection: Selection | null
+  annotations: Annotation[]
+  printFiles: PrintFile[]
+  selectionMode: 'part' | 'area'
+  selectPart(partId: string): Selection
+  selectArea(rect: { x: number, y: number, width: number, height: number }): Selection
+  setSelectionMode(mode: 'part' | 'area'): 'part' | 'area'
+  clearSelection(): void
+  onSelectionChange(listener: (selection: Selection | null) => void): () => void
+  addAnnotation(note: string): Annotation
+  removeAnnotation(id: string): void
+  clearAnnotations(): void
+  getReviewState(): ReviewState
+}
+
+interface Selection {
+  kind: 'part'
+  partId: string
+  name: string
+  point?: [number, number, number]  // world-space mesh hit point when clicked
+  normal?: [number, number, number]
+  faceIndex?: number
+}
+
+interface AreaSelection {
+  kind: 'area'
+  rect: { x: number, y: number, width: number, height: number } // normalized to the canvas, origin top-left
+  screen: { width: number, height: number }
+  camera: { position: number[], target: number[] }
+  snapshot: { dataUrl: string, width: number, height: number, crop: { x: number, y: number, width: number, height: number } }
+}
+
+interface PrintFile { label: string; url: string; fileName?: string }
+interface PrintBundle { label: string; url: string; fileName?: string }
+
+interface Annotation {
+  id: string
+  note: string
+  selection: Selection | null
+  camera: { position: [number, number, number], target: [number, number, number] }
+  state: string | null
+  createdAt: string
+}
+
+interface ReviewState {
+  selection: Selection | null
+  annotations: Annotation[]
+  camera: { position: number[], target: number[] }
+  state: string | null
+  selectionMode: 'part' | 'area'
 }
 
 interface CheckResult {
@@ -104,6 +167,56 @@ interface CheckResult {
 `createViewer(canvas, options?)` returns everything except `ready` (start it
 `false`, flip to `true` once your model is built and meshed) and `states`
 (start as `{}`, assign your own toggle functions — see below).
+
+Meshes added through `addThreeGeometry(..., name)` are selectable by that name.
+The viewer highlights clicked parts and exposes a serializable review state for
+an AI tool or persistence layer. `addAnnotation()` captures the current part,
+camera, state, and note. The generic viewer keeps annotations in memory; a
+consumer owns persistence and any user-facing annotation UI. Review changes
+also emit structured `[cadbea]` browser-console events and an
+`cadbea-review` `CustomEvent`. Pass `reviewWebhook: '/__cadbea/review'` to POST
+the same event to a consumer-owned endpoint. An agent connected through
+Playwright can listen with `page.on('console', ...)` and parse the JSON after
+the prefix.
+
+When a webhook is configured, the viewer can monitor its bridge with
+`getBridgeStatus()`, `checkBridge()`, and `onBridgeStatusChange()`. Set
+`bridgeHealthUrl` explicitly when the webhook is not a standard `/review`
+endpoint; otherwise the viewer derives `/health` from the webhook URL. Status
+polling defaults to every five seconds and reports `connected`, `disconnected`,
+`checking`, or `disabled`.
+
+The bundled bridge also exposes `GET /events/stream` as a Server-Sent Events
+feed for AI adapters that should react immediately to new browser reviews;
+`GET /events` remains available for history and recovery after reconnects.
+
+The gc-cad example starts the bridge automatically with `npm run example:dev`
+and connects to `http://127.0.0.1:8787/review` by default. A healthy existing
+bridge is reused. Override the endpoint with `?reviewWebhook=…`.
+When started from Codex, the bridge uses `CODEX_THREAD_ID` to queue new comments
+in that conversation with `codex queue`. Set `CADBEA_CODEX_THREAD` to target a
+specific conversation when starting from another terminal. The Codex CLI must
+be installed and able to access its local session. `CADBEA_CODEX_CLI` can specify
+the CLI's JavaScript entry point. `/health` reports the target conversation;
+notification failures are logged and comments remain in the event history.
+Restart the bridge to change the target conversation. With a custom
+`CADBEA_BRIDGE_PORT`, also pass the matching `reviewWebhook` URL to the viewer.
+
+Set `printBundle` in `createViewer()` to let the library render one download-all
+button with `viewer.renderPrintFiles(container)`. A `printFiles` array remains
+available as a fallback when a consumer has no bundle endpoint. The viewer does
+not assume a part naming scheme or hardcode a model's exports. Use
+`setSelectionMode('area')` for drag selection; this temporarily disables orbit
+controls. Area selections are visual focus regions, not part selections: review
+state and webhook events contain the normalized rectangle, viewport size, and
+camera plus a PNG data URL and pixel crop so an AI can inspect exactly what the
+user marked. Pass `includeReviewSnapshots: false` when a consumer already owns
+its screenshot pipeline and wants smaller events.
+
+The viewer persists the last camera position, orbit target, and zoom in
+`localStorage`, so a refresh after an AI model adjustment keeps the user's
+view. Override the key with `cameraStorageKey`, or pass `false` to disable
+persistence.
 
 ### Standard views
 
@@ -131,7 +244,7 @@ view is framed to the whole model and is too coarse to show a small defect
 toolkit's own first real project spent a long debugging session on exactly
 that before someone looked at a hand-aimed close-up camera and found it in
 seconds. Same contract as standard views (`setView('corner-tl')`,
-`ai-cad-capture --view=corner-tl`, `ai-cad-contact-sheet --corners` for all
+`cadbea-capture --view=corner-tl`, `cadbea-contact-sheet --corners` for all
 four in one grid).
 
 ### States
@@ -154,7 +267,7 @@ viewer.states = {
 
 ```js
 // main.js / main.ts, after building your model:
-import { createViewer, addThreeGeometry } from 'ai-cad'
+import { createViewer, addThreeGeometry } from 'cadbea'
 
 const viewer = createViewer(canvas)
 // If your modeler's up-axis isn't three.js's Y-up (e.g. replicad is Z-up),
@@ -169,21 +282,21 @@ addThreeGeometry(viewer.modelGroup, bodyGeo, 0x2a6db5, 0.92, 'body')
 viewer.states = { exploded: setExploded, section: setSection }
 viewer.setView('iso')     // a sane initial camera, instead of hand-picked numbers
 viewer.ready = true
-window.__aiCadViewer = viewer
+window.__cadbeaViewer = viewer
 ```
 
-Add `ai-cad` as a dependency (this repo isn't published — use a `file:`
+Add `cadbea` as a dependency (this repo isn't published — use a `file:`
 reference to wherever you cloned/placed it):
 
 ```json
 {
-  "dependencies": { "ai-cad": "file:../../ai-cad" },
+  "dependencies": { "cadbea": "file:../../cadbea" },
   "peerDependencies": { "three": ">=0.160.0" }
 }
 ```
 
 **If you're on Vite**, also add this — without it you will very likely load
-*two* three.js instances (one from your project, one from `ai-cad`'s own
+*two* three.js instances (one from your project, one from `cadbea`'s own
 resolution as a symlinked package), which breaks anything that does
 `instanceof THREE.X` across the boundary (e.g. `BufferGeometryUtils`
 functions silently no-op on a geometry your project created). Watch dev-tools
@@ -197,22 +310,22 @@ export default defineConfig({
 })
 ```
 
-Also don't install a physical copy of `three` inside `ai-cad`'s own
+Also don't install a physical copy of `three` inside `cadbea`'s own
 `node_modules` (delete it if `npm install` puts one there to satisfy the
 peerDependency) — a local copy there is resolved *before* your project's,
 recreating the same duplicate-instance problem `preserveSymlinks` is meant to
 avoid.
 
-**Vite will not live-reload edits to `ai-cad`'s own source** the way it
+**Vite will not live-reload edits to `cadbea`'s own source** the way it
 reloads your project's `src/` — a `file:`-linked package outside your
-project root isn't watched the same way. If you edit `ai-cad` and a change
-doesn't seem to take effect, check for a `page reload …ai-cad/src/…` line in
+project root isn't watched the same way. If you edit `cadbea` and a change
+doesn't seem to take effect, check for a `page reload …cadbea/src/…` line in
 the dev server's terminal output; if there isn't one, kill the dev server,
 delete `node_modules/.vite`, and restart it before concluding the change had
 no effect. (This cost real time in this project's history — see
 `gc-cad/PARTS.md`'s "Known issues" table for the investigation it derailed.)
 
-Then create `ai-cad.config.mjs` in your project (wherever you'll run the
+Then create `cadbea.config.mjs` in your project (wherever you'll run the
 capture commands from — typically next to your `package.json`):
 
 ```js
@@ -233,9 +346,9 @@ And wire up npm scripts pointing at wherever you placed this toolkit:
 ```json
 {
   "scripts": {
-    "views": "node ../../ai-cad/capture/capture.mjs",
-    "contact-sheet": "node ../../ai-cad/capture/contact-sheet.mjs",
-    "check": "node ../../ai-cad/capture/check.mjs"
+    "views": "node ../../cadbea/capture/capture.mjs",
+    "contact-sheet": "node ../../cadbea/capture/contact-sheet.mjs",
+    "check": "node ../../cadbea/capture/check.mjs"
   }
 }
 ```
@@ -277,3 +390,7 @@ npm run contact-sheet -- --view=iso,top,left,right   # override the angle set ex
   proves the *tessellated* mesh is watertight, not the underlying B-Rep
   (though the two should agree in practice; a B-Rep with a genuine gap
   should tessellate into a mesh with matching boundary edges).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

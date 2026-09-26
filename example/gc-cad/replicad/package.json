@@ -1,0 +1,28 @@
+{
+  "name": "gc-cad-replicad",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "cadbea": "file:../../..",
+    "replicad": "1.1.0",
+    "replicad-opencascadejs": "1.1.0",
+    "replicad-threejs-helper": "1.0.0",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.170.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0",
+    "vite-plugin-top-level-await": "^1.4.0",
+    "vite-plugin-wasm": "^3.4.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --outDir .cad-build && vite build && node scripts/export-stl.mjs",
+    "typecheck": "tsc --noEmit",
+    "views": "cadbea-capture",
+    "contact-sheet": "cadbea-contact-sheet",
+    "check": "cadbea-check",
+    "test": "node scripts/test-viewer.mjs"
+  }
+}

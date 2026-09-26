@@ -1,17 +1,33 @@
 {
-  "name": "ai-cad",
+  "name": "cadbea",
   "version": "0.1.0",
   "private": true,
+  "scripts": {
+    "example:dev": "npm --prefix example/gc-cad/replicad run dev",
+    "example:build": "npm --prefix example/gc-cad/replicad run build",
+    "example:typecheck": "npm --prefix example/gc-cad/replicad run typecheck",
+    "example:test": "npm --prefix example/gc-cad/replicad test",
+    "bridge": "node bridge/review-bridge.mjs"
+  },
   "type": "module",
   "description": "Project-agnostic viewer bootstrap + screenshot/contact-sheet capture harness for reviewing three.js-based parametric CAD models (built for replicad, not coupled to it).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andersbea/cadbea.git"
+  },
+  "homepage": "https://github.com/andersbea/cadbea#readme",
+  "bugs": {
+    "url": "https://github.com/andersbea/cadbea/issues"
+  },
   "main": "src/viewer.js",
   "exports": {
     ".": "./src/viewer.js"
   },
   "bin": {
-    "ai-cad-capture": "./capture/capture.mjs",
-    "ai-cad-contact-sheet": "./capture/contact-sheet.mjs",
-    "ai-cad-check": "./capture/check.mjs"
+    "cadbea-capture": "./capture/capture.mjs",
+    "cadbea-contact-sheet": "./capture/contact-sheet.mjs",
+    "cadbea-check": "./capture/check.mjs"
   },
   "peerDependencies": {
     "three": ">=0.160.0"

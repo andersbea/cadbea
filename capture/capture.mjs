@@ -2,15 +2,15 @@
 /**
  * Captures one PNG per requested view — the 8 generic bounding-box-derived
  * standard views, the 4 generic top-corner close-ups, plus any
- * project-specific `extraViews` from the project's ai-cad.config.mjs. For a
+ * project-specific `extraViews` from the project's cadbea.config.mjs. For a
  * fast multi-angle scan across states, use contact-sheet.mjs instead; use
  * this for a full-resolution look at one view.
  *
  * Usage (from a project directory with its dev server running):
- *   ai-cad-capture                          # all standard + corner + extra views, baseline state
- *   ai-cad-capture --view=iso,front         # subset (by name)
- *   ai-cad-capture --state=exploded         # apply a declared state to all standard/corner views
- *   ai-cad-capture --config=./ai-cad.config.mjs --out=./screenshots/latest
+ *   cadbea-capture                          # all standard + corner + extra views, baseline state
+ *   cadbea-capture --view=iso,front         # subset (by name)
+ *   cadbea-capture --state=exploded         # apply a declared state to all standard/corner views
+ *   cadbea-capture --config=./cadbea.config.mjs --out=./screenshots/latest
  */
 
 import path from 'path'
@@ -27,7 +27,7 @@ const CORNER_VIEWS = ['corner-tl', 'corner-tr', 'corner-bl', 'corner-br']
 
 async function main() {
   const args = parseArgs()
-  const config = await loadConfig(args.config ?? './ai-cad.config.mjs')
+  const config = await loadConfig(args.config ?? './cadbea.config.mjs')
   const url = args.url ?? config.url
   const outDir = path.resolve(args.out ?? config.outDir ?? './screenshots/latest')
   const extraViews = config.extraViews ?? []

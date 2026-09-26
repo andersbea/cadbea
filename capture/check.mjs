@@ -11,8 +11,8 @@
  * watertight — safe to wire into a pre-commit or CI check.
  *
  * Usage:
- *   ai-cad-check
- *   ai-cad-check --config=./ai-cad.config.mjs
+ *   cadbea-check
+ *   cadbea-check --config=./cadbea.config.mjs
  */
 
 import { openViewer, setState, stateNames } from './lib/browser.mjs'
@@ -20,7 +20,7 @@ import { parseArgs, loadConfig } from './lib/config.mjs'
 
 async function main() {
   const args = parseArgs()
-  const config = await loadConfig(args.config ?? './ai-cad.config.mjs')
+  const config = await loadConfig(args.config ?? './cadbea.config.mjs')
   const url = args.url ?? config.url
 
   console.log(`Opening ${url} …`)
@@ -34,7 +34,7 @@ async function main() {
   let anyUnnamed = false
   for (const mode of modes) {
     await setState(page, mode === 'default' ? null : mode)
-    const results = await page.evaluate((opts) => window.__aiCadViewer.checkGeometry(opts), {})
+    const results = await page.evaluate((opts) => window.__cadbeaViewer.checkGeometry(opts), {})
     console.log(`\n${mode}:`)
     if (results.length === 0) console.log('  (no visible meshes)')
     for (const r of results) {

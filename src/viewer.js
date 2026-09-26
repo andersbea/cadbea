@@ -2,7 +2,7 @@
  * Generic three.js viewer bootstrap for reviewing a parametric CAD model —
  * no knowledge of any particular model's geometry or dimensions. A project
  * builds its model, adds meshes to `viewer.modelGroup`, then exposes the
- * returned viewer as `window.__aiCadViewer` so capture.mjs / contact-sheet.mjs
+ * returned viewer as `window.__cadbeaViewer` so capture.mjs / contact-sheet.mjs
  * can drive it. See ../README.md for the full contract.
  *
  * Requires `three` and (for controls) `three/addons/controls/OrbitControls.js`
@@ -146,6 +146,14 @@ export function computeStandardView(box, view) {
 /** @type {CornerView[]} */
 export const CORNER_VIEWS = ['corner-tl', 'corner-tr', 'corner-bl', 'corner-br']
 
+/** @typedef {{ kind: 'part', partId: string, name: string, point?: [number, number, number], normal?: [number, number, number], faceIndex?: number }} PartSelection */
+/** @typedef {{ dataUrl: string, width: number, height: number, crop: { x: number, y: number, width: number, height: number } }} ReviewSnapshot */
+/** @typedef {{ kind: 'area', rect: { x: number, y: number, width: number, height: number }, screen: { width: number, height: number }, camera: { position: [number, number, number], target: [number, number, number] }, snapshot: ReviewSnapshot }} AreaSelection */
+/** @typedef {PartSelection | AreaSelection} Selection */
+/** @typedef {{ label: string, url: string, fileName?: string }} PrintFile */
+/** @typedef {{ label: string, url: string, fileName?: string }} PrintBundle */
+/** @typedef {{ id: string, note: string, selection: Selection | null, camera: { position: [number, number, number], target: [number, number, number] }, state: string | null, createdAt: string }} Annotation */
+
 // [sign of X, sign of Z] for each of the box's 4 top vertices.
 const CORNER_SIGNS = {
   'corner-tl': [-1, -1],
@@ -190,10 +198,10 @@ export function computeCornerView(box, corner) {
 
 /**
  * @param {HTMLCanvasElement} canvas
- * @param {{ background?: number, grid?: boolean }} [options]
+ * @param {{ background?: number, grid?: boolean, reviewWebhook?: string, bridgeHealthUrl?: string, bridgePollIntervalMs?: number, printFiles?: PrintFile[], printBundle?: PrintBundle, cameraStorageKey?: string | false, includeReviewSnapshots?: boolean }} [options]
  */
 export function createViewer(canvas, options = {}) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
   renderer.setSize(window.innerWidth, window.innerHeight)
   renderer.shadowMap.enabled = true
@@ -213,6 +221,35 @@ export function createViewer(canvas, options = {}) {
   controls.dampingFactor = 0.06
   controls.update()
 
+  // Keep the reviewer's last orbit angle, zoom, and pan across refreshes.
+  // Consumers can use a model/version-specific key or pass false to opt out.
+  const cameraStorageKey = options.cameraStorageKey === false
+    ? null
+    : options.cameraStorageKey ?? `cadbea:camera:${location.pathname}`
+  let savedCamera = null
+  let cameraRestored = false
+  if (cameraStorageKey) {
+    try {
+      const stored = localStorage.getItem(cameraStorageKey)
+      if (stored) savedCamera = JSON.parse(stored)
+    } catch {
+      savedCamera = null
+    }
+  }
+  const saveCamera = () => {
+    if (!cameraStorageKey) return
+    try {
+      localStorage.setItem(cameraStorageKey, JSON.stringify({
+        position: camera.position.toArray(),
+        target: controls.target.toArray(),
+        zoom: camera.zoom,
+      }))
+    } catch {
+      // Storage can be disabled in private/embedded browser contexts.
+    }
+  }
+  controls.addEventListener('change', saveCamera)
+
   scene.add(new THREE.AmbientLight(0x8090c0, 0.5))
 
   const key = new THREE.DirectionalLight(0xffffff, 1.2)
@@ -231,6 +268,146 @@ export function createViewer(canvas, options = {}) {
 
   if (options.grid !== false) {
     scene.add(new THREE.GridHelper(300, 30, 0x2a2a4a, 0x1e1e34))
+  }
+
+  const raycaster = new THREE.Raycaster()
+  const pointer = new THREE.Vector2()
+  const selectionListeners = new Set()
+  const selectionModeListeners = new Set()
+  let selectedObject = null
+  let selectedObjects = new Set()
+  let pointerDown = null
+  let areaDrag = null
+  let currentState = null
+  let annotationNumber = 0
+  let selectionMode = 'part'
+  const bridgeStatusListeners = new Set()
+  const bridgeHealthUrl = options.bridgeHealthUrl
+    ?? (options.reviewWebhook?.replace(/\/review\/?$/, '/health'))
+  let bridgeStatus = {
+    state: bridgeHealthUrl ? 'checking' : 'disabled',
+    url: bridgeHealthUrl ?? null,
+    checkedAt: null,
+    error: null,
+  }
+  let bridgePollTimer = null
+
+  const selectionOverlay = document.createElement('div')
+  selectionOverlay.className = 'cadbea-selection-rectangle'
+  Object.assign(selectionOverlay.style, {
+    display: 'none', position: 'fixed', pointerEvents: 'none', zIndex: '10',
+    border: '1px solid #ffc857', background: 'rgba(255, 200, 87, 0.16)',
+  })
+  document.body.append(selectionOverlay)
+
+  const setHighlighted = (object, highlighted) => {
+    if (!object?.material) return
+    const materials = Array.isArray(object.material) ? object.material : [object.material]
+    for (const material of materials) {
+      if (!material.emissive) continue
+      if (highlighted) {
+        material.userData.cadbeaPreviousEmissive = material.emissive.clone()
+        material.userData.cadbeaPreviousEmissiveIntensity = material.emissiveIntensity
+        material.emissive.set(0xffb000)
+        material.emissiveIntensity = 0.65
+      } else if (material.userData.cadbeaPreviousEmissive) {
+        material.emissive.copy(material.userData.cadbeaPreviousEmissive)
+        material.emissiveIntensity = material.userData.cadbeaPreviousEmissiveIntensity
+        delete material.userData.cadbeaPreviousEmissive
+        delete material.userData.cadbeaPreviousEmissiveIntensity
+      }
+    }
+  }
+
+  const notifySelection = (selection) => {
+    for (const listener of selectionListeners) listener(selection)
+  }
+
+  const cameraSnapshot = () => ({
+    position: /** @type {[number, number, number]} */ (camera.position.toArray()),
+    target: /** @type {[number, number, number]} */ (controls.target.toArray()),
+  })
+
+  const clearHighlights = () => {
+    for (const object of selectedObjects) setHighlighted(object, false)
+    selectedObjects = new Set()
+    selectedObject = null
+  }
+
+  const highlightObjects = (objects) => {
+    clearHighlights()
+    selectedObjects = new Set(objects)
+    for (const object of selectedObjects) setHighlighted(object, true)
+    selectedObject = objects[0] ?? null
+  }
+
+  const setSelectionMode = (mode) => {
+    if (mode !== 'part' && mode !== 'area') throw new Error(`Unknown selection mode "${mode}"`)
+    selectionMode = mode
+    controls.enabled = mode === 'part'
+    for (const listener of selectionModeListeners) listener(mode)
+    emitReviewEvent('selection-mode-changed', { mode })
+    return mode
+  }
+
+  /**
+   * Emits a structured browser-console event and optionally POSTs it to a
+   * consumer-owned local webhook. Browser automation can listen for the
+   * `[cadbea]` console prefix without requiring a server endpoint.
+   */
+  const emitReviewEvent = (type, data = {}) => {
+    const event = {
+      source: 'cadbea',
+      type,
+      createdAt: new Date().toISOString(),
+      ...data,
+      review: viewer.getReviewState(),
+    }
+    console.info(`[cadbea] ${JSON.stringify(event)}`)
+    window.dispatchEvent(new CustomEvent('cadbea-review', { detail: event }))
+    if (options.reviewWebhook) {
+      const body = JSON.stringify(event)
+      fetch(options.reviewWebhook, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+        // Chromium limits keepalive request bodies to a small size. Area
+        // snapshots are intentionally larger, so let those requests finish
+        // normally while the page remains open.
+        keepalive: body.length < 60_000,
+      }).catch((error) => console.warn(`[cadbea] webhook failed: ${error.message}`))
+    }
+  }
+
+  const notifyBridgeStatus = (next) => {
+    bridgeStatus = { ...bridgeStatus, ...next }
+    if (typeof viewer !== 'undefined') viewer.bridgeStatus = { ...bridgeStatus }
+    for (const listener of bridgeStatusListeners) listener({ ...bridgeStatus })
+  }
+
+  const checkBridge = async () => {
+    if (!bridgeHealthUrl) {
+      notifyBridgeStatus({ state: 'disabled', checkedAt: new Date().toISOString(), error: null })
+      return { ...bridgeStatus }
+    }
+    notifyBridgeStatus({ state: 'checking', error: null })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 2500)
+    try {
+      const response = await fetch(bridgeHealthUrl, { cache: 'no-store', signal: controller.signal })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok || payload.ok !== true) throw new Error(`health check returned HTTP ${response.status}`)
+      notifyBridgeStatus({ state: 'connected', checkedAt: new Date().toISOString(), error: null })
+    } catch (error) {
+      notifyBridgeStatus({
+        state: 'disconnected',
+        checkedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
+    return { ...bridgeStatus }
   }
 
   const tick = () => {
@@ -255,11 +432,28 @@ export function createViewer(canvas, options = {}) {
     /** @type {Record<string, (on: boolean) => void>} */
     states: {},
     ready: false,
+    /** @type {Selection | null} */
+    selection: null,
+    /** @type {Annotation[]} */
+    annotations: [],
+    bridgeStatus: { ...bridgeStatus },
+    /** @type {PrintFile[]} */
+    printFiles: options.printFiles ?? [],
+    selectionMode,
     render() {
       renderer.render(scene, camera)
     },
     /** @param {StandardView | CornerView} view */
     setView(view) {
+      if (!cameraRestored && savedCamera?.position && savedCamera?.target) {
+        camera.position.fromArray(savedCamera.position)
+        controls.target.fromArray(savedCamera.target)
+        if (Number.isFinite(savedCamera.zoom)) camera.zoom = savedCamera.zoom
+        camera.updateProjectionMatrix()
+        controls.update()
+        cameraRestored = true
+        return
+      }
       const box = visibleBoundingBox(modelGroup)
       const { position, target } = CORNER_VIEWS.includes(view)
         ? computeCornerView(box, view)
@@ -267,6 +461,7 @@ export function createViewer(canvas, options = {}) {
       camera.position.copy(position)
       controls.target.copy(target)
       controls.update()
+      cameraRestored = true
     },
     /** Turns one named state on and every other declared state off. */
     setState(name) {
@@ -274,12 +469,249 @@ export function createViewer(canvas, options = {}) {
       // assigns `viewer.states = {...}` after createViewer() returns, which
       // replaces this property with a new object.
       for (const [key, fn] of Object.entries(this.states)) fn(key === name)
+      currentState = name
+      emitReviewEvent('state-changed', { state: name })
+    },
+    setSelectionMode(mode) {
+      const result = setSelectionMode(mode)
+      this.selectionMode = result
+      return result
+    },
+    onSelectionModeChange(listener) {
+      selectionModeListeners.add(listener)
+      return () => selectionModeListeners.delete(listener)
+    },
+    /** Return the latest bridge health state. */
+    getBridgeStatus() {
+      return { ...bridgeStatus }
+    },
+    /** Check the configured review bridge immediately. */
+    checkBridge,
+    /** Subscribe to bridge health changes. */
+    onBridgeStatusChange(listener) {
+      bridgeStatusListeners.add(listener)
+      listener({ ...bridgeStatus })
+      return () => bridgeStatusListeners.delete(listener)
+    },
+    /** Select a named mesh part and return its AI-readable selection context. */
+    selectPart(partId) {
+      let object = null
+      modelGroup.traverse((candidate) => {
+        if (!object && candidate.isMesh && candidate.userData.cadbeaPart?.id === partId) object = candidate
+      })
+      if (!object) throw new Error(`Unknown selectable part "${partId}"`)
+      highlightObjects([object])
+      selectionOverlay.style.display = 'none'
+      this.selection = { kind: 'part', partId, name: object.userData.cadbeaPart.name }
+      notifySelection(this.selection)
+      emitReviewEvent('selection-changed', { selection: this.selection })
+      return this.selection
+    },
+    /** Clear the current selected part. */
+    clearSelection() {
+      clearHighlights()
+      this.selection = null
+      selectionOverlay.style.display = 'none'
+      notifySelection(null)
+      emitReviewEvent('selection-cleared')
+    },
+    /** Subscribe to clicks or programmatic selection changes. */
+    onSelectionChange(listener) {
+      selectionListeners.add(listener)
+      return () => selectionListeners.delete(listener)
+    },
+    /** Select a normalized canvas rectangle (origin top-left) and report intersecting parts. */
+    selectArea(rect) {
+      const normalized = {
+        x: Math.max(0, Math.min(1, rect.x)),
+        y: Math.max(0, Math.min(1, rect.y)),
+        width: Math.max(0, Math.min(1 - rect.x, rect.width)),
+        height: Math.max(0, Math.min(1 - rect.y, rect.height)),
+      }
+      // An area is a visual focus for the AI, not a semantic part selection.
+      // Clear any previous part highlight, but do not infer or expose parts
+      // merely because their projected bounds overlap the review rectangle.
+      clearHighlights()
+      renderer.render(scene, camera)
+      this.selection = {
+        kind: 'area', rect: normalized,
+        screen: { width: canvas.clientWidth, height: canvas.clientHeight },
+        camera: cameraSnapshot(),
+        snapshot: {
+          dataUrl: options.includeReviewSnapshots === false ? '' : canvas.toDataURL('image/png'),
+          width: canvas.width,
+          height: canvas.height,
+          crop: {
+            x: normalized.x * canvas.width,
+            y: normalized.y * canvas.height,
+            width: normalized.width * canvas.width,
+            height: normalized.height * canvas.height,
+          },
+        },
+      }
+      const canvasRect = canvas.getBoundingClientRect()
+      Object.assign(selectionOverlay.style, {
+        display: 'block',
+        left: `${canvasRect.left + normalized.x * canvasRect.width}px`,
+        top: `${canvasRect.top + normalized.y * canvasRect.height}px`,
+        width: `${normalized.width * canvasRect.width}px`,
+        height: `${normalized.height * canvasRect.height}px`,
+      })
+      notifySelection(this.selection)
+      emitReviewEvent('area-selected', { selection: this.selection })
+      return this.selection
+    },
+    /** Save a note with the current selection and review camera. */
+    addAnnotation(note) {
+      const text = String(note ?? '').trim()
+      if (!text) throw new Error('Annotation note cannot be empty')
+      const annotation = {
+        id: `annotation-${++annotationNumber}`,
+        note: text,
+        selection: this.selection ? structuredClone(this.selection) : null,
+        camera: cameraSnapshot(),
+        state: currentState,
+        createdAt: new Date().toISOString(),
+      }
+      this.annotations.push(annotation)
+      emitReviewEvent('annotation-added', { annotation })
+      return annotation
+    },
+    removeAnnotation(id) {
+      this.annotations = this.annotations.filter((annotation) => annotation.id !== id)
+      emitReviewEvent('annotation-removed', { annotationId: id })
+    },
+    clearAnnotations() {
+      this.annotations = []
+      emitReviewEvent('annotations-cleared')
+    },
+    /** Return a serializable review state for an AI tool or persistence layer. */
+    getReviewState() {
+      return {
+        selection: this.selection ? structuredClone(this.selection) : null,
+        annotations: structuredClone(this.annotations),
+        camera: {
+          position: this.camera.position.toArray(),
+          target: this.controls.target.toArray(),
+        },
+        state: currentState,
+        selectionMode,
+      }
+    },
+    /** Render the consumer-provided printable files into an application-owned panel. */
+    renderPrintFiles(container) {
+      container.replaceChildren()
+      const heading = document.createElement('h3')
+      heading.textContent = '3D print files (STL)'
+      container.append(heading)
+      const bundle = options.printBundle
+      const link = document.createElement('a')
+      link.className = 'cadbea-download-all'
+      link.href = bundle?.url ?? '#'
+      link.download = bundle?.fileName ?? ''
+      link.title = bundle ? 'Download all printable model files' : 'Download all printable model files individually'
+      const icon = document.createElement('span')
+      icon.setAttribute('aria-hidden', 'true')
+      icon.textContent = '⇩'
+      link.append(icon, document.createTextNode(` ${bundle?.label ?? 'Download all print files'}`))
+      if (!bundle) {
+        link.removeAttribute('download')
+        link.addEventListener('click', (event) => {
+          event.preventDefault()
+          for (const file of this.printFiles) {
+            const fileLink = document.createElement('a')
+            fileLink.href = file.url
+            fileLink.download = file.fileName ?? ''
+            fileLink.click()
+          }
+        })
+      }
+      container.append(link)
     },
     /** @param {{ tolerance?: number }} [options] */
     checkGeometry(options) {
       return checkWatertight(modelGroup, options)
     },
   }
+
+  if (bridgeHealthUrl) {
+    checkBridge()
+    const interval = Math.max(1000, options.bridgePollIntervalMs ?? 5000)
+    bridgePollTimer = setInterval(checkBridge, interval)
+  }
+
+  canvas.addEventListener('pointerdown', (event) => {
+    if (selectionMode === 'area' && event.button === 0) {
+      const rect = canvas.getBoundingClientRect()
+      areaDrag = { x: event.clientX - rect.left, y: event.clientY - rect.top, endX: event.clientX - rect.left, endY: event.clientY - rect.top, width: 0, height: 0 }
+      controls.enabled = false
+      canvas.setPointerCapture(event.pointerId)
+      return
+    }
+    pointerDown = { x: event.clientX, y: event.clientY }
+  })
+  canvas.addEventListener('pointermove', (event) => {
+    if (!areaDrag) return
+    const rect = canvas.getBoundingClientRect()
+    const endX = Math.max(0, Math.min(rect.width, event.clientX - rect.left))
+    const endY = Math.max(0, Math.min(rect.height, event.clientY - rect.top))
+    areaDrag.endX = endX
+    areaDrag.endY = endY
+    const x = Math.min(areaDrag.x, endX)
+    const y = Math.min(areaDrag.y, endY)
+    areaDrag.width = Math.abs(endX - areaDrag.x)
+    areaDrag.height = Math.abs(endY - areaDrag.y)
+    Object.assign(selectionOverlay.style, {
+      display: 'block', left: `${rect.left + x}px`, top: `${rect.top + y}px`,
+      width: `${areaDrag.width}px`, height: `${areaDrag.height}px`,
+    })
+  })
+  canvas.addEventListener('pointerup', (event) => {
+    if (areaDrag) {
+      const drag = areaDrag
+      areaDrag = null
+      selectionOverlay.style.display = 'none'
+      if (drag.width >= 4 && drag.height >= 4) {
+        const rect = canvas.getBoundingClientRect()
+        viewer.selectArea({
+          x: Math.min(drag.x, drag.endX) / rect.width,
+          y: Math.min(drag.y, drag.endY) / rect.height,
+          width: drag.width / rect.width,
+          height: drag.height / rect.height,
+        })
+      } else viewer.clearSelection()
+      return
+    }
+    if (!pointerDown || Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 5) {
+      pointerDown = null
+      return
+    }
+    pointerDown = null
+    const rect = canvas.getBoundingClientRect()
+    pointer.set(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1,
+    )
+    raycaster.setFromCamera(pointer, camera)
+    const hit = raycaster.intersectObjects(modelGroup.children, true)
+      .find((intersection) => intersection.object.visible && intersection.object.userData.cadbeaPart)
+    if (!hit) {
+      viewer.clearSelection()
+      return
+    }
+    const part = hit.object.userData.cadbeaPart
+    highlightObjects([hit.object])
+    selectionOverlay.style.display = 'none'
+    viewer.selection = {
+      kind: 'part',
+      partId: part.id,
+      name: part.name,
+      point: /** @type {[number, number, number]} */ (hit.point.toArray()),
+      faceIndex: hit.faceIndex ?? undefined,
+    }
+    notifySelection(viewer.selection)
+    emitReviewEvent('selection-changed', { selection: viewer.selection })
+  })
 
   return viewer
 }
@@ -314,6 +746,7 @@ export function addThreeGeometry(group, geo, color = 0x3a7bd5, opacity = 0.92, n
   geo.faces.computeVertexNormals()
   const faceMesh = new THREE.Mesh(geo.faces, faceMat)
   faceMesh.name = name
+  faceMesh.userData.cadbeaPart = { id: name || '(unnamed)', name: name || '(unnamed)' }
   faceMesh.castShadow = true
   faceMesh.receiveShadow = true
   group.add(faceMesh)

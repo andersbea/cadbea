@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GC Node Enclosure — replicad</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body { height: 100%; overscroll-behavior: none; }
+      body { background: #0f0f1a; color: #e0e0f0; font-family: monospace; overflow: hidden; }
+      canvas { display: block; touch-action: none; }
+
+      #topbar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 10px 12px;
+        /* Let clicks/touches pass through the gaps in this bar to the canvas
+           underneath; children that need input opt back in below. */
+        pointer-events: none;
+      }
+
+      #status {
+        flex: 1 1 auto;
+        min-width: 0;
+        font-size: 12px;
+        line-height: 1.4;
+        color: #7070a0;
+        word-break: break-word;
+      }
+
+      #bridge-status {
+        flex: 0 0 auto;
+        align-self: center;
+        padding: 5px 8px;
+        border: 1px solid #4a4a6a;
+        border-radius: 999px;
+        color: #a0a0c0;
+        font-size: 10px;
+        white-space: nowrap;
+      }
+      #bridge-status::before { content: '●'; margin-right: 5px; color: #777799; }
+      #bridge-status[data-state='connected'] { border-color: #3c8060; color: #bfe8cf; }
+      #bridge-status[data-state='connected']::before { color: #65d391; }
+      #bridge-status[data-state='checking'] { border-color: #806c3c; color: #f1d58e; }
+      #bridge-status[data-state='checking']::before { color: #ffc857; }
+      #bridge-status[data-state='disconnected'] { border-color: #803c4a; color: #f0b4bd; }
+      #bridge-status[data-state='disconnected']::before { color: #ff6678; }
+
+      #controls {
+        flex: 0 0 auto;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+        pointer-events: auto;
+      }
+
+      #controls button {
+        background: rgba(20, 35, 60, 0.85);
+        border: 1px solid #3a5a80;
+        color: #c0d0f0;
+        padding: 10px 16px;
+        cursor: pointer;
+        font-family: monospace;
+        font-size: 13px;
+        border-radius: 4px;
+        transition: background 0.15s, border-color 0.15s;
+        user-select: none;
+        /* Comfortable touch target (Apple/Google guidance: ~44px) even
+           though the box itself is sized by padding, not a fixed height. */
+        min-height: 40px;
+      }
+      #controls button:hover { background: rgba(40, 70, 120, 0.9); border-color: #6090c0; }
+      #controls button.active { background: rgba(30, 80, 150, 0.9); border-color: #80b0e0; color: #e8f0ff; }
+
+      #review-panel {
+        position: fixed;
+        top: 74px;
+        right: 12px;
+        width: min(320px, calc(100vw - 24px));
+        padding: 12px;
+        background: rgba(10, 15, 30, 0.92);
+        border: 1px solid #334a70;
+        border-radius: 5px;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+        pointer-events: auto;
+      }
+      #review-panel h2 { margin: 0 0 8px; font-size: 13px; color: #dfe8ff; }
+      #selection-modes { display: flex; gap: 6px; margin: 0 0 8px; }
+      #selection-modes button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+      #selection-modes button.active { background: #304d76; border-color: #80b0e0; color: #fff; }
+      .mode-icon { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+      #selection-name { min-height: 18px; color: #ffc857; font-size: 12px; }
+      #selection-context { margin: 4px 0 8px; color: #8797b8; font-size: 10px; line-height: 1.4; }
+      #annotation-note {
+        width: 100%; min-height: 56px; resize: vertical; padding: 7px;
+        background: #111a2d; border: 1px solid #334a70; color: #e0e8ff;
+        font: 11px monospace; border-radius: 3px;
+      }
+      #review-panel button { margin-top: 7px; margin-right: 5px; padding: 6px 9px; }
+      #mark-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+      #annotations { margin: 10px 0 0; padding: 0; list-style: none; max-height: 150px; overflow: auto; }
+      #annotations li { padding: 6px 0; border-top: 1px solid #263756; color: #b6c5e2; font-size: 10px; line-height: 1.4; }
+      #annotations strong { color: #ffc857; }
+
+      #print-files { margin-top: 12px; padding-top: 10px; border-top: 1px solid #263756; }
+      #print-files h3 { margin: 0 0 7px; font-size: 11px; color: #dfe8ff; }
+      .cadbea-download-all {
+        display: block; width: 100%; margin-top: 5px; padding: 7px 9px;
+        background: #182b26; border: 1px solid #3c8060; color: #bfe8cf;
+        font: 11px monospace; text-align: left; text-decoration: none; border-radius: 3px;
+      }
+      .cadbea-download-all:hover { background: #234637; border-color: #70c995; color: #e5fff0; }
+
+      #info {
+        position: fixed;
+        bottom: 10px;
+        left: 12px;
+        right: 12px;
+        font-size: 11px;
+        color: #4a4a6a;
+        line-height: 1.6;
+        pointer-events: none;
+      }
+
+      @media (max-width: 600px) {
+        #topbar { padding: 8px; }
+        #status { font-size: 11px; }
+        #controls button { padding: 11px 14px; font-size: 12px; }
+        #info { font-size: 10px; bottom: 8px; left: 8px; right: 8px; }
+        #review-panel { top: 96px; }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+
+    <div id="topbar">
+      <div id="status">Loading OpenCASCADE…</div>
+      <div id="bridge-status" data-state="disabled">Bridge not configured</div>
+      <div id="controls">
+        <button id="explode-btn">Exploded view</button>
+        <button id="section-btn">Section view</button>
+      </div>
+    </div>
+
+    <aside id="review-panel" aria-label="AI review panel">
+      <h2>AI review</h2>
+      <div id="selection-modes" aria-label="Selection mode">
+        <button id="part-mode-btn" class="active" type="button" title="Click individual parts">
+          <svg class="mode-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/></svg>
+          Parts
+        </button>
+        <button id="area-mode-btn" type="button" title="Drag to select an area">
+          <svg class="mode-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" stroke-dasharray="2 1.5"/><path d="M5 6v-2M5 4h2M11 10v2M11 12H9"/></svg>
+          Area
+        </button>
+      </div>
+      <div id="selection-name">Click a visible part to select it</div>
+      <div id="selection-context">Selected geometry will be highlighted and included in review context.</div>
+      <textarea id="annotation-note" placeholder="Describe what needs changing..."></textarea>
+      <button id="mark-btn" disabled>Mark for AI</button>
+      <button id="clear-selection-btn">Clear selection</button>
+      <ul id="annotations" aria-label="Annotations"></ul>
+      <div id="print-files"></div>
+    </aside>
+
+    <div id="info">
+      Click a part to select it &nbsp;|&nbsp; drag to orbit &nbsp;|&nbsp; two-finger drag to pan &nbsp;|&nbsp; pinch/scroll to zoom<br />
+      GC Node Enclosure v0.1 — Heltec Wireless Tracker V2 + EEMB 852040
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

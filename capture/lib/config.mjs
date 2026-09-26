@@ -13,7 +13,7 @@ export function parseArgs() {
 }
 
 /**
- * Loads a project's `ai-cad.config.mjs` (default export). See ../../README.md
+ * Loads a project's `cadbea.config.mjs` (default export). See ../../README.md
  * for the shape: { url, outDir, extraViews?, contactViews?, title? }.
  */
 export async function loadConfig(configPath) {

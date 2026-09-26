@@ -1,0 +1,64 @@
+{
+  "source": "C:/dev/guardianchain-labs/gc-cad",
+  "baseCommit": "5d94c150877da0ee00ff26275144afb8965ad0c2",
+  "includesUncommittedChanges": [
+    "HARDWARE.md",
+    "replicad/src/main.ts",
+    "replicad/src/model/enclosure.ts",
+    "replicad/src/model/hardware.ts"
+  ],
+  "files": [
+    {
+      "path": "HARDWARE.md",
+      "sha256": "aa8e9cded058e7c0e6286ceab64a5dfb5a0d5fe0912111f03f777244f9118018"
+    },
+    {
+      "path": "PARTS.md",
+      "sha256": "e3415c299115279fc2090fdce15f599a75d4b99ce06ae3f467152fed60ff4233"
+    },
+    {
+      "path": "replicad/package-lock.json",
+      "sha256": "893d4b56c0c051dcd400d374dc4664b5fcdd8208eb8600554cba1605e7f4aba7"
+    },
+    {
+      "path": "replicad/package.json",
+      "sha256": "847b048b299b6704d39cb8c49a45700d815eb4f6af823c3bf53b11a32b8c5deb"
+    },
+    {
+      "path": "replicad/vite.config.ts",
+      "sha256": "322a8ed1868b0e9c9823bc20546a6134c4601df24821286f7b2e84433ec65b45"
+    },
+    {
+      "path": "replicad/tsconfig.json",
+      "sha256": "461ee1876384981690ef636ce3f2c64753f998d19773dc3976a0b79a545470c1"
+    },
+    {
+      "path": "replicad/index.html",
+      "sha256": "3e7b851b21979be2f63273d29d1a6a9a7bb24441a2e5fa8def452acf81db71b3"
+    },
+    {
+      "path": "replicad/cadbea.config.mjs",
+      "sha256": "33095e7a89a696831189b721d92562aa1ef7befb6d45c3b0740776b38a3ab253"
+    },
+    {
+      "path": "replicad/src/main.ts",
+      "sha256": "31924c7814cbbd8f9a4d610f240c92ff09ba9a27b48dccb01c216f5d9a6830a6"
+    },
+    {
+      "path": "replicad/src/cadbea.d.ts",
+      "sha256": "5101784ae7f4631896008b403098c224d89ebfb4f1b305896f3a3b31b2e26902"
+    },
+    {
+      "path": "replicad/src/model/enclosure.ts",
+      "sha256": "b7195135bac42bb3abca36feff16f4067dd1e1790674713b47a28d21053ffd27"
+    },
+    {
+      "path": "replicad/src/model/hardware.ts",
+      "sha256": "18870a3b3f2cda2c1ad39231da13eac6d1525560ba4f3521ca2e8ca429f8f73f"
+    },
+    {
+      "path": "replicad/scripts/export-stl.mjs",
+      "sha256": "6fa99f509eb562c74e6c54e1f4065778bbdf49eba19c1faca15c7c5f41076d6d"
+    }
+  ]
+}

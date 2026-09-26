@@ -4,14 +4,14 @@
  * declared viewer state (plus a baseline "default"), each grid holding
  * several angles of that state — an overview at a glance instead of opening
  * files one at a time. Follow up on anything suspicious with
- * `ai-cad-capture --view=<name> --state=<mode>` for a full-resolution look,
+ * `cadbea-capture --view=<name> --state=<mode>` for a full-resolution look,
  * since a contact-sheet cell is downscaled.
  *
  * Usage (from a project directory with its dev server running):
- *   ai-cad-contact-sheet                     # overview: all 8 standard views
- *   ai-cad-contact-sheet --corners           # close-up: all 4 top-corner views
- *   ai-cad-contact-sheet --view=iso,top      # override the angle set explicitly
- *   ai-cad-contact-sheet --config=./ai-cad.config.mjs --out=./screenshots/latest
+ *   cadbea-contact-sheet                     # overview: all 8 standard views
+ *   cadbea-contact-sheet --corners           # close-up: all 4 top-corner views
+ *   cadbea-contact-sheet --view=iso,top      # override the angle set explicitly
+ *   cadbea-contact-sheet --config=./cadbea.config.mjs --out=./screenshots/latest
  */
 
 import path from 'path'
@@ -30,7 +30,7 @@ const CORNER_VIEWS = ['corner-tl', 'corner-tr', 'corner-bl', 'corner-br']
 
 async function main() {
   const args = parseArgs()
-  const config = await loadConfig(args.config ?? './ai-cad.config.mjs')
+  const config = await loadConfig(args.config ?? './cadbea.config.mjs')
   const url = args.url ?? config.url
   const outDir = path.resolve(args.out ?? config.outDir ?? './screenshots/latest')
   const viewNames = args.view

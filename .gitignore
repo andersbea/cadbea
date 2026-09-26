@@ -1,1 +1,8 @@
 node_modules/
+debug.log
+example/**/dist/
+example/**/.cad-build/
+example/**/screenshots/
+example/**/.vite-test-cache/
+example/**/debug.log
+bridge/.data/
