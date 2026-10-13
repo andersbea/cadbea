@@ -96,7 +96,7 @@ Notes:
 | IP target | IP54 | Achievable with FDM + gasket |
 | Lid skirt height | 2.5 mm | Outer skirt insertion depth for friction retention |
 | Lid skirt wall | 1.0 mm | Skirt wall thickness (2–3 FDM perimeters) |
-| Lid skirt clearance | 0.15 mm | Interference per side vs. body exterior (press-fit) |
+| Lid skirt clearance | 0.25 mm | Interference per side vs. body exterior (press-fit). Raised from 0.15 mm 2026-10-04 — review feedback reported the lid too loose after printing; unprinted/unconfirmed |
 | Cable routes | Open at both guide ends | The centered guides leave 13 mm of PCB length unobstructed at each end. The former 16 mm full-height cable cutouts are obsolete; check cable and connector fit with the actual hardware. |
 
 ---

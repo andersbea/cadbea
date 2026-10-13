@@ -46,7 +46,9 @@ export const USB_C = {
 export const FIT = {
   skirtH: 2.5,        // mm — outer skirt insertion depth
   skirtWall: 1.0,     // mm — skirt wall thickness
-  skirtClear: 0.15,   // mm per side — interference vs. body exterior (press-fit)
+  skirtClear: 0.25,   // mm per side — interference vs. body exterior (press-fit). Raised from
+                       // 0.15 2026-10-04: review feedback reported the lid too loose after
+                       // printing. Reprint and confirm before raising further.
 } as const
 
 // Enclosure design parameters — see HARDWARE.md for rationale

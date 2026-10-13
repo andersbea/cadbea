@@ -19,6 +19,8 @@ let browser
 const errors = []
 const reviewEvents = []
 const baselineNames = ['body', 'lid', 'lid-button-prg', 'lid-button-rst', 'board-ref', 'battery-ref', 'antenna-ref']
+const EXPLODE_LID_MM = 38
+const EXPLODE_BUTTON_MM = 20
 const views = ['iso', 'iso-back', 'front', 'back', 'left', 'right', 'top', 'bottom',
   'corner-tl', 'corner-tr', 'corner-bl', 'corner-br']
 const report = { states: {}, views: [] }
@@ -41,9 +43,9 @@ try {
   // Keep fixture annotations from notifying a developer's live Codex session.
   await page.goto(`${server.resolvedUrls.local[0]}?reviewWebhook=`)
   await page.waitForFunction(() => window.__cadbeaViewer?.ready === true
-    || document.getElementById('status')?.textContent?.startsWith('Error:'), null, { timeout: 120_000 })
+    || document.querySelector('.cadbea-status')?.textContent?.startsWith('Error:'), null, { timeout: 120_000 })
   assert.equal(await page.evaluate(() => window.__cadbeaViewer?.ready), true,
-    await page.locator('#status').textContent())
+    await page.locator('.cadbea-status').textContent())
   report.readyMs = Math.round(performance.now() - started)
   assert.deepEqual(await page.evaluate(() => Object.keys(window.__cadbeaViewer.states).sort()), ['exploded', 'section'])
 
@@ -73,8 +75,15 @@ try {
         assert.equal(snapshot.objects.find((obj) => obj.name === name + '-section' + suffix).visible, state === 'section')
       }
     }
-    for (const name of ['lid', 'lid-button-prg', 'lid-button-rst']) {
-      assert.equal(snapshot.objects.find((obj) => obj.name === name).z, state === 'exploded' ? 38 : 0)
+    // Both the full and section-cut lid mesh move together, so whichever is
+    // actually visible carries the correct explode offset either way.
+    for (const name of ['lid', 'lid-section']) {
+      assert.equal(snapshot.objects.find((obj) => obj.name === name)?.z, state === 'exploded' ? EXPLODE_LID_MM : 0)
+    }
+    for (const name of ['lid-button-prg', 'lid-button-rst']) {
+      // Buttons settle between the body and the lid during explode, not
+      // beyond the lid — see main.tsx EXPLODE_BUTTON_MM.
+      assert.equal(snapshot.objects.find((obj) => obj.name === name).z, state === 'exploded' ? EXPLODE_BUTTON_MM : 0)
     }
     const cells = []
     for (const view of ['iso', 'left', 'top', 'corner-tl']) {
@@ -96,7 +105,7 @@ try {
     const annotation = viewer.addAnnotation('Check the USB-C clearance against the measured connector.')
     const state = viewer.getReviewState()
     viewer.clearSelection()
-    return { selection, annotation, state, panel: document.getElementById('selection-name')?.textContent }
+    return { selection, annotation, state, panel: document.querySelector('.cadbea-selection-name')?.textContent }
   })
   assert.equal(review.selection.partId, 'body')
   assert.equal(review.annotation.selection.partId, 'body')
@@ -120,11 +129,11 @@ try {
   assert.ok(areaSelection.snapshot.crop.width > 0 && areaSelection.snapshot.crop.height > 0)
   assert.ok(reviewEvents.some((event) => event.type === 'area-selected' && event.selection.kind === 'area'))
 
-  const printLinks = await page.locator('#print-files a[download]').evaluateAll((links) =>
-    links.map((link) => ({ href: link.getAttribute('href'), download: link.getAttribute('download') })))
-  assert.deepEqual(printLinks, [
-    { href: '/dist/print/node-wireless-tracker-v2-print-files.zip', download: 'node-wireless-tracker-v2-print-files.zip' },
-  ])
+  // The compact download button in the toolbar (moved out of the review
+  // panel) — a single <a> when a printBundle is configured, as it is here.
+  const downloadLink = page.locator('[data-testid="download-print-files"]')
+  assert.equal(await downloadLink.getAttribute('href'), '/dist/print/node-wireless-tracker-v2-print-files.zip')
+  assert.equal(await downloadLink.getAttribute('download'), 'node-wireless-tracker-v2-print-files.zip')
 
   for (const view of views) {
     const camera = await page.evaluate((name) => {
@@ -138,14 +147,29 @@ try {
   }
 
   // A capture reset must win over any pending interactive animation.
-  await page.locator('#explode-btn').click()
+  await page.locator('[data-testid="explode-btn"]').click()
   await page.evaluate(() => window.__cadbeaViewer.setState(null))
   await page.waitForTimeout(650)
   assert.equal(await page.evaluate(() => window.__cadbeaViewer.modelGroup.getObjectByName('lid').position.z), 0)
-  await page.locator('#section-btn').click()
+
+  // Exploded/assembled and full/section are independent toggle-button-group
+  // axes now — either can be active together, unlike the single-select
+  // `states` the capture CLI uses via setState().
+  await page.locator('[data-testid="section-btn"]').click()
   assert.equal(await page.evaluate(() => window.__cadbeaViewer.modelGroup.getObjectByName('body').visible), false)
-  await page.locator('#explode-btn').click()
-  assert.equal(await page.evaluate(() => window.__cadbeaViewer.modelGroup.getObjectByName('body-section').visible), false)
+  await page.locator('[data-testid="explode-btn"]').click()
+  await page.waitForTimeout(650)
+  assert.equal(await page.evaluate(() => window.__cadbeaViewer.modelGroup.getObjectByName('body-section').visible), true,
+    'section must stay on while switching to exploded')
+  assert.equal(await page.evaluate(() => window.__cadbeaViewer.modelGroup.getObjectByName('lid').position.z), EXPLODE_LID_MM)
+  assert.equal(await page.evaluate(() => window.__cadbeaViewer.modelGroup.getObjectByName('lid-button-prg').position.z), EXPLODE_BUTTON_MM)
+  await page.locator('[data-testid="assembled-btn"]').click()
+  await page.waitForTimeout(650)
+  assert.equal(await page.evaluate(() => window.__cadbeaViewer.modelGroup.getObjectByName('lid').position.z), 0)
+  assert.equal(await page.evaluate(() => window.__cadbeaViewer.modelGroup.getObjectByName('body-section').visible), true,
+    'section must stay on while switching back to assembled')
+  await page.locator('[data-testid="full-btn"]').click()
+  assert.equal(await page.evaluate(() => window.__cadbeaViewer.modelGroup.getObjectByName('body').visible), true)
   await page.evaluate(() => window.__cadbeaViewer.setState(null))
   const persistedCamera = await page.evaluate(() => {
     const viewer = window.__cadbeaViewer
@@ -156,6 +180,18 @@ try {
   })
   await page.reload()
   await page.waitForFunction(() => window.__cadbeaViewer?.ready === true, null, { timeout: 120_000 })
+  // `ready` flips true synchronously inside build(), but the camera restore
+  // happens in ModelControls' mount effect — a later React commit, not the
+  // same tick — so read the camera only once it has actually settled rather
+  // than racing that effect.
+  await page.waitForFunction(
+    (expected) => {
+      const p = window.__cadbeaViewer.camera.position
+      return Math.abs(p.x - expected[0]) < 1e-6 && Math.abs(p.y - expected[1]) < 1e-6 && Math.abs(p.z - expected[2]) < 1e-6
+    },
+    [321, 222, 123],
+    { timeout: 10_000 },
+  )
   const restoredCamera = await page.evaluate(() => ({
     position: window.__cadbeaViewer.camera.position.toArray(),
     target: window.__cadbeaViewer.controls.target.toArray(),
