@@ -7,6 +7,8 @@
     "example:build": "npm --prefix example/gc-cad/replicad run build",
     "example:typecheck": "npm --prefix example/gc-cad/replicad run typecheck",
     "example:test": "npm --prefix example/gc-cad/replicad test",
+    "file-viewer:dev": "npm --prefix example/file-viewer run dev",
+    "file-viewer:test": "npm --prefix example/file-viewer test",
     "bridge": "node bridge/review-bridge.mjs"
   },
   "type": "module",
@@ -22,15 +24,26 @@
   },
   "main": "src/viewer.js",
   "exports": {
-    ".": "./src/viewer.js"
+    ".": "./src/viewer.js",
+    "./ui": "./src/ui/index.jsx",
+    "./ui/style.css": "./src/ui/style.css",
+    "./bridge/vite-plugin": "./bridge/start-bridge.mjs"
   },
   "bin": {
     "cadbea-capture": "./capture/capture.mjs",
     "cadbea-contact-sheet": "./capture/contact-sheet.mjs",
-    "cadbea-check": "./capture/check.mjs"
+    "cadbea-check": "./capture/check.mjs",
+    "cadbea-bridge": "./bridge/review-bridge.mjs",
+    "cadbea-init": "./init/init.mjs"
   },
   "peerDependencies": {
-    "three": ">=0.160.0"
+    "three": ">=0.160.0",
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true },
+    "react-dom": { "optional": true }
   },
   "dependencies": {
     "playwright": "^1.63.0",
