@@ -1,0 +1,250 @@
+@import './theme/tokens.css';
+
+/* Page reset ---------------------------------------------------------------
+ * Zero-specificity (:where) so a consumer can override any of it. Meant for
+ * a full-page viewer — importing this stylesheet is enough to get a sane
+ * base without writing project CSS for it. */
+
+:where(html, body) { height: 100%; overscroll-behavior: none; }
+:where(body) {
+  margin: 0;
+  background: var(--cadbea-bg);
+  color: var(--cadbea-text);
+  font-family: var(--cadbea-font);
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+:where(*, *::before, *::after) { box-sizing: border-box; }
+
+/* Layout shell ------------------------------------------------------------ */
+
+.cadbea-app {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  font-family: var(--cadbea-font);
+  color: var(--cadbea-text);
+  pointer-events: none; /* re-enabled below on the canvas and on interactive chrome */
+}
+
+.cadbea-app canvas {
+  display: block;
+  touch-action: none;
+  pointer-events: auto;
+}
+
+.cadbea-topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  pointer-events: none; /* let clicks pass through the gaps to the canvas */
+}
+
+.cadbea-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--cadbea-text-muted);
+  word-break: break-word;
+}
+
+.cadbea-controls {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.cadbea-info {
+  position: fixed;
+  bottom: 10px;
+  left: 12px;
+  right: 12px;
+  font-size: 11px;
+  color: var(--cadbea-text-muted);
+  line-height: 1.6;
+  pointer-events: none;
+}
+
+.cadbea-bridge-status {
+  position: fixed;
+  bottom: 10px;
+  right: 12px;
+  pointer-events: auto;
+}
+
+/* Shared atoms -------------------------------------------------------------- */
+
+.cadbea-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 6px 10px;
+  background: var(--cadbea-surface);
+  border: 1px solid var(--cadbea-border);
+  border-radius: var(--cadbea-radius);
+  color: var(--cadbea-text);
+  font-family: var(--cadbea-font);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.cadbea-btn:hover { border-color: var(--cadbea-accent); }
+.cadbea-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.cadbea-btn[data-active] { background: var(--cadbea-accent); border-color: var(--cadbea-accent-strong); color: var(--cadbea-accent-text); }
+
+.cadbea-btn--primary { background: var(--cadbea-accent); border-color: var(--cadbea-accent-strong); color: var(--cadbea-accent-text); }
+.cadbea-btn--ghost { background: transparent; border-color: transparent; color: var(--cadbea-text-muted); }
+.cadbea-btn--ghost:hover { background: var(--cadbea-surface); border-color: var(--cadbea-border); }
+.cadbea-btn--danger { color: var(--cadbea-danger); border-color: var(--cadbea-danger); }
+
+/* A connected, segmented strip of options — one active at a time — in the
+ * style of MUI's ToggleButtonGroup, built from the same tokens as .cadbea-btn
+ * rather than a one-off look. */
+.cadbea-toggle-group {
+  display: inline-flex;
+  border: 1px solid var(--cadbea-border);
+  border-radius: var(--cadbea-radius);
+  overflow: hidden;
+}
+.cadbea-toggle-group__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  min-width: 30px;
+  padding: 6px;
+  background: var(--cadbea-surface);
+  border: none;
+  border-right: 1px solid var(--cadbea-border);
+  color: var(--cadbea-text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.cadbea-toggle-group__btn:last-child { border-right: none; }
+.cadbea-toggle-group__btn:hover { background: var(--cadbea-bg); color: var(--cadbea-text); }
+.cadbea-toggle-group__btn[data-active] { background: var(--cadbea-accent); color: var(--cadbea-accent-text); }
+.cadbea-toggle-group__btn svg { display: block; }
+
+.cadbea-panel {
+  background: var(--cadbea-surface);
+  border: 1px solid var(--cadbea-border);
+  border-radius: 5px;
+  box-shadow: var(--cadbea-shadow);
+  padding: 12px;
+  color: var(--cadbea-text);
+  pointer-events: auto;
+}
+.cadbea-panel__title { margin: 0 0 8px; font-size: 13px; color: var(--cadbea-text); }
+
+.cadbea-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: 1px solid var(--cadbea-border);
+  border-radius: 999px;
+  color: var(--cadbea-text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.cadbea-pill::before { content: '\25CF'; color: var(--cadbea-text-muted); }
+.cadbea-pill[data-state='connected'] { border-color: var(--cadbea-success); color: var(--cadbea-success); }
+.cadbea-pill[data-state='connected']::before { color: var(--cadbea-success); }
+.cadbea-pill[data-state='checking'] { border-color: var(--cadbea-highlight); color: var(--cadbea-highlight); }
+.cadbea-pill[data-state='checking']::before { color: var(--cadbea-highlight); }
+.cadbea-pill[data-state='disconnected'] { border-color: var(--cadbea-danger); color: var(--cadbea-danger); }
+.cadbea-pill[data-state='disconnected']::before { color: var(--cadbea-danger); }
+
+.cadbea-field { display: block; width: 100%; }
+.cadbea-field__label { display: block; margin: 0 0 4px; font-size: 11px; color: var(--cadbea-text-muted); }
+.cadbea-field__control {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  padding: 7px;
+  background: var(--cadbea-surface-strong);
+  border: 1px solid var(--cadbea-border);
+  border-radius: 3px;
+  color: var(--cadbea-text);
+  font: 11px var(--cadbea-font);
+}
+
+/* Review panel -------------------------------------------------------------- */
+
+.cadbea-review-panel {
+  position: fixed;
+  top: 60px;
+  right: 12px;
+  width: min(320px, calc(100vw - 24px));
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+.cadbea-selection-name { min-height: 18px; color: var(--cadbea-highlight); font-size: 12px; margin: 4px 0; }
+.cadbea-selection-context { margin: 4px 0 8px; color: var(--cadbea-text-muted); font-size: 10px; line-height: 1.4; }
+.cadbea-review-panel .cadbea-field { margin-bottom: 7px; }
+.cadbea-review-actions { display: flex; gap: 6px; margin-bottom: 8px; }
+.cadbea-annotations { margin: 10px 0 0; padding: 0; list-style: none; max-height: 150px; overflow: auto; }
+.cadbea-annotations li { padding: 6px 0; border-top: 1px solid var(--cadbea-border); color: var(--cadbea-text-muted); font-size: 10px; line-height: 1.4; }
+.cadbea-annotations strong { color: var(--cadbea-highlight); }
+
+.cadbea-print-files { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cadbea-border); }
+.cadbea-print-files h3 { margin: 0 0 7px; font-size: 11px; color: var(--cadbea-text); }
+.cadbea-download-all {
+  display: block; width: 100%; margin-top: 5px; padding: 7px 9px;
+  background: var(--cadbea-success-bg); border: 1px solid var(--cadbea-success); color: var(--cadbea-success);
+  font: 11px var(--cadbea-font); text-align: left; text-decoration: none; border-radius: 3px;
+}
+.cadbea-download-all:hover { filter: brightness(1.1); }
+
+/* Model loader --------------------------------------------------------------- */
+
+.cadbea-loader {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Only the dropzone box itself should capture clicks — the full-screen
+     container would otherwise sit on top of (and block clicks to) the
+     topbar/review-panel chrome that's earlier in the DOM but shares the
+     same fixed viewport-covering footprint. */
+  pointer-events: none;
+}
+.cadbea-loader__dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 32px 40px;
+  border: 1px dashed var(--cadbea-border);
+  border-radius: 8px;
+  background: var(--cadbea-surface);
+  color: var(--cadbea-text-muted);
+  text-align: center;
+  pointer-events: auto;
+}
+.cadbea-loader__dropzone[data-dragover='true'] { border-color: var(--cadbea-accent); color: var(--cadbea-text); }
+.cadbea-loader__error { color: var(--cadbea-danger); font-size: 11px; margin-top: 6px; }
+.cadbea-loader input[type='file'] { display: none; }
+
+@media (max-width: 600px) {
+  .cadbea-topbar { padding: 8px; }
+  .cadbea-status { font-size: 11px; }
+  .cadbea-info { font-size: 10px; bottom: 8px; left: 8px; right: 8px; }
+  .cadbea-review-panel { top: 96px; }
+}

@@ -12,6 +12,8 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { STLLoader } from 'three/addons/loaders/STLLoader.js'
 
 /** @typedef {'iso'|'iso-back'|'front'|'back'|'left'|'right'|'top'|'bottom'} StandardView */
 
@@ -198,7 +200,7 @@ export function computeCornerView(box, corner) {
 
 /**
  * @param {HTMLCanvasElement} canvas
- * @param {{ background?: number, grid?: boolean, reviewWebhook?: string, bridgeHealthUrl?: string, bridgePollIntervalMs?: number, printFiles?: PrintFile[], printBundle?: PrintBundle, cameraStorageKey?: string | false, includeReviewSnapshots?: boolean }} [options]
+ * @param {{ background?: number, grid?: boolean, reviewWebhook?: string, bridgeHealthUrl?: string, bridgePollIntervalMs?: number, printFiles?: PrintFile[], printBundle?: PrintBundle, cameraStorageKey?: string | false, stateStorageKey?: string | false, includeReviewSnapshots?: boolean }} [options]
  */
 export function createViewer(canvas, options = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true })
@@ -249,6 +251,24 @@ export function createViewer(canvas, options = {}) {
     }
   }
   controls.addEventListener('change', saveCamera)
+
+  // Keep the active named state (exploded/section/...) across refreshes too,
+  // for the same reason as the camera above. States are consumer-registered
+  // after createViewer() returns (`viewer.states = {...}`), so the restore
+  // happens lazily the first time that assignment is observed — see the
+  // `states` accessor defined on `viewer` below — once the saved name is
+  // confirmed to still exist on the newly assigned states.
+  const stateStorageKey = options.stateStorageKey === false
+    ? null
+    : options.stateStorageKey ?? `cadbea:state:${location.pathname}`
+  let savedStateName = null
+  if (stateStorageKey) {
+    try {
+      savedStateName = localStorage.getItem(stateStorageKey) || null
+    } catch {
+      savedStateName = null
+    }
+  }
 
   scene.add(new THREE.AmbientLight(0x8090c0, 0.5))
 
@@ -439,6 +459,7 @@ export function createViewer(canvas, options = {}) {
     bridgeStatus: { ...bridgeStatus },
     /** @type {PrintFile[]} */
     printFiles: options.printFiles ?? [],
+    printBundle: options.printBundle ?? null,
     selectionMode,
     render() {
       renderer.render(scene, camera)
@@ -470,6 +491,14 @@ export function createViewer(canvas, options = {}) {
       // replaces this property with a new object.
       for (const [key, fn] of Object.entries(this.states)) fn(key === name)
       currentState = name
+      if (stateStorageKey) {
+        try {
+          if (name) localStorage.setItem(stateStorageKey, name)
+          else localStorage.removeItem(stateStorageKey)
+        } catch {
+          // Storage can be disabled in private/embedded browser contexts.
+        }
+      }
       emitReviewEvent('state-changed', { state: name })
     },
     setSelectionMode(mode) {
@@ -634,6 +663,30 @@ export function createViewer(canvas, options = {}) {
     },
   }
 
+  // A consumer typically assigns `viewer.states = {...}` once, after
+  // createViewer() returns and its model/states are ready. Intercept that
+  // assignment to restore a saved state the same way setView() lazily
+  // restores a saved camera — but only once, and only if the saved name is
+  // still a key the consumer actually registered (a different model/example
+  // reusing the same storage key may not declare it).
+  let statesValue = viewer.states
+  let stateRestoreAttempted = false
+  Object.defineProperty(viewer, 'states', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      return statesValue
+    },
+    set(value) {
+      statesValue = value
+      if (stateRestoreAttempted || !savedStateName) return
+      if (Object.prototype.hasOwnProperty.call(value, savedStateName)) {
+        stateRestoreAttempted = true
+        viewer.setState(savedStateName)
+      }
+    },
+  })
+
   if (bridgeHealthUrl) {
     checkBridge()
     const interval = Math.max(1000, options.bridgePollIntervalMs ?? 5000)
@@ -756,4 +809,100 @@ export function addThreeGeometry(group, geo, color = 0x3a7bd5, opacity = 0.92, n
   group.add(edges)
 
   return { faceMesh, edges }
+}
+
+const gltfLoader = new GLTFLoader()
+const stlLoader = new STLLoader()
+
+/** Appends `-2`, `-3`, ... until `base` doesn't collide with an existing named part under `group`. */
+function uniquePartName(group, base) {
+  const existing = new Set()
+  group.traverse((obj) => {
+    if (obj.userData?.cadbeaPart) existing.add(obj.userData.cadbeaPart.name)
+  })
+  if (!existing.has(base)) return base
+  let n = 2
+  while (existing.has(`${base}-${n}`)) n++
+  return `${base}-${n}`
+}
+
+/**
+ * Tags and adds an already-built mesh the same way addThreeGeometry() does
+ * (selectable, named, covered by checkGeometry()), deriving edge lines from
+ * its own geometry so a loaded file matches the replicad-sourced visual
+ * style. Reparents with `attach()` (not `add()`) when the mesh already has a
+ * parent (e.g. a glTF scene graph node), which preserves its world transform
+ * instead of resetting it to the group's origin.
+ * @param {THREE.Group} group
+ * @param {THREE.Mesh} mesh
+ * @param {string} name
+ */
+function wrapLoadedMesh(group, mesh, name) {
+  if (!mesh.geometry.attributes.normal) mesh.geometry.computeVertexNormals()
+  mesh.userData.cadbeaPart = { id: name, name }
+  mesh.name = name
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  if (mesh.parent) group.attach(mesh)
+  else group.add(mesh)
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(mesh.geometry, 15),
+    new THREE.LineBasicMaterial({ color: 0x6090e0 }),
+  )
+  mesh.add(edges)
+  return { faceMesh: mesh, edges, name }
+}
+
+/**
+ * Loads a single exported model file (glTF/GLB or STL) into
+ * `viewer.modelGroup`, for reviewing an already-exported model with no
+ * project-specific build script — the counterpart to addThreeGeometry() for
+ * consumers that don't generate geometry themselves. Frame the camera to the
+ * result with `viewer.setView('iso')` after loading (left to the caller,
+ * which knows when a whole batch of dropped files is done).
+ *
+ * STEP is deliberately not supported here — it needs an OpenCascade/wasm
+ * importer (e.g. occt-import-js), a much heavier dependency than this
+ * generic loader is meant to carry.
+ * @param {File} file
+ * @param {ReturnType<typeof createViewer>} viewer
+ * @param {{ color?: number, opacity?: number }} [options]
+ * @returns {Promise<Array<{ faceMesh: THREE.Mesh, edges: THREE.LineSegments, name: string }>>}
+ */
+export async function loadModelFile(file, viewer, options = {}) {
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  const baseName = file.name.replace(/\.[^./]+$/, '') || file.name
+  const buffer = await file.arrayBuffer()
+  const group = viewer.modelGroup
+
+  if (ext === 'stl') {
+    const geometry = stlLoader.parse(buffer)
+    const material = new THREE.MeshPhongMaterial({
+      color: options.color ?? 0x3a7bd5,
+      specular: 0x224488,
+      shininess: 60,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: options.opacity ?? 0.92,
+    })
+    const mesh = new THREE.Mesh(geometry, material)
+    return [wrapLoadedMesh(group, mesh, uniquePartName(group, baseName))]
+  }
+
+  if (ext === 'gltf' || ext === 'glb') {
+    const gltf = await new Promise((resolve, reject) => {
+      gltfLoader.parse(buffer, '', resolve, reject)
+    })
+    const meshes = []
+    gltf.scene.traverse((obj) => {
+      if (obj.isMesh) meshes.push(obj)
+    })
+    if (meshes.length === 0) throw new Error(`"${file.name}" contains no meshes`)
+    return meshes.map((mesh, i) => {
+      const base = meshes.length > 1 ? `${baseName}-${mesh.name || i + 1}` : baseName
+      return wrapLoadedMesh(group, mesh, uniquePartName(group, base))
+    })
+  }
+
+  throw new Error(`Unsupported model file type ".${ext ?? ''}" — cadbea currently loads .glb, .gltf, and .stl`)
 }

@@ -1,0 +1,66 @@
+/*
+ * Design tokens for the cadbea UI kit. Light palette lives on bare :root;
+ * dark is layered on top under prefers-color-scheme (skipped when
+ * [data-theme="light"] is forced) and again under [data-theme="dark"] so an
+ * explicit toggle wins in both directions. Custom themes registered via
+ * ThemeProvider.registerTheme() add further [data-theme="<name>"] blocks at
+ * runtime using this same set of custom properties.
+ */
+
+:root {
+  --cadbea-bg: #f5f6fa;
+  --cadbea-surface: rgba(255, 255, 255, 0.92);
+  --cadbea-surface-strong: #ffffff;
+  --cadbea-border: #d6dae5;
+  --cadbea-text: #1a1d29;
+  --cadbea-text-muted: #6b7280;
+  --cadbea-accent: #3a7bd5;
+  --cadbea-accent-strong: #2a6db5;
+  --cadbea-accent-text: #ffffff;
+  --cadbea-highlight: #b8860b;
+  --cadbea-success: #2f9e5c;
+  --cadbea-success-bg: #e6f6ec;
+  --cadbea-danger: #c23b4a;
+  --cadbea-danger-bg: #fbeaec;
+  --cadbea-radius: 4px;
+  --cadbea-shadow: 0 8px 30px rgba(20, 20, 40, 0.12);
+  --cadbea-font: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --cadbea-bg: #0f0f1a;
+    --cadbea-surface: rgba(10, 15, 30, 0.92);
+    --cadbea-surface-strong: #141b2d;
+    --cadbea-border: #334a70;
+    --cadbea-text: #e0e8ff;
+    --cadbea-text-muted: #8797b8;
+    --cadbea-accent: #3a7bd5;
+    --cadbea-accent-strong: #4a90e0;
+    --cadbea-accent-text: #ffffff;
+    --cadbea-highlight: #ffc857;
+    --cadbea-success: #65d391;
+    --cadbea-success-bg: #182b26;
+    --cadbea-danger: #ff6678;
+    --cadbea-danger-bg: #2b1620;
+    --cadbea-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  }
+}
+
+:root[data-theme='dark'] {
+  --cadbea-bg: #0f0f1a;
+  --cadbea-surface: rgba(10, 15, 30, 0.92);
+  --cadbea-surface-strong: #141b2d;
+  --cadbea-border: #334a70;
+  --cadbea-text: #e0e8ff;
+  --cadbea-text-muted: #8797b8;
+  --cadbea-accent: #3a7bd5;
+  --cadbea-accent-strong: #4a90e0;
+  --cadbea-accent-text: #ffffff;
+  --cadbea-highlight: #ffc857;
+  --cadbea-success: #65d391;
+  --cadbea-success-bg: #182b26;
+  --cadbea-danger: #ff6678;
+  --cadbea-danger-bg: #2b1620;
+  --cadbea-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
