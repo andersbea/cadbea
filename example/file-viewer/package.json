@@ -1,0 +1,21 @@
+{
+  "name": "cadbea-file-viewer",
+  "private": true,
+  "type": "module",
+  "description": "Minimal Vite + React app proving the zero-code path: drop in an exported .glb/.gltf/.stl and review it with no project-specific code at all.",
+  "dependencies": {
+    "cadbea": "file:../..",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "vite": "^6.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "node scripts/test-loader.mjs"
+  }
+}
