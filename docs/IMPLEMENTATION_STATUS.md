@@ -1,6 +1,6 @@
 # Implementation Status
 
-_Last updated: 2026-09-22_
+_Last updated: 2026-10-04_
 
 ## Current State
 
@@ -35,6 +35,31 @@ port 5173 belongs to the original upstream project and should not be stopped.
 - Latest physical-fit revision: battery and antenna lanes are swapped, the
   enclosure gains 2 mm of internal length, and the base now has a 1 mm-per-side
   recessed upper shoulder for a flush-footprint lid.
+- 2026-09-26: shared React UI kit (`cadbea/ui`) shipped — `CadbeaApp`,
+  `ThemeProvider`/`ThemeToggle`/`registerTheme()`, `ReviewPanel`, `Topbar`,
+  `StatesToolbar`, and shared `Button`/`Panel`/`Pill`/`Field` primitives,
+  built on a new `loadModelFile()` engine export (`.glb`/`.gltf`/`.stl`).
+  `example/gc-cad` migrated onto it (embedded pattern: `<CadbeaApp
+  viewer={viewer}>`); new `example/file-viewer` proves the turnkey,
+  zero-project-code pattern (`mountCadbeaApp()`). This is the React/Vite
+  review shell PROJECT_VISION.md named as planned work, scoped to what the
+  duplicated per-consumer chrome actually needed rather than the full
+  long-term framework.
+- 2026-10-04: viewer persists the active named state (`exploded`/`section`)
+  across refreshes, the same way it already persisted the camera
+  (`stateStorageKey`, mirroring `cameraStorageKey`) — fixes review state
+  being silently wiped by Vite's own full-page reload after a source edit.
+- 2026-10-04: the review bridge's Vite plugin is now a real package export
+  (`cadbea/bridge/vite-plugin`) with a standalone bin (`cadbea-bridge`),
+  instead of only being reachable via a relative path into `cadbea`'s source
+  tree — `example/gc-cad` now imports it the same way an external consumer
+  would. New `cadbea-init` bin scaffolds a review project (turnkey app in a
+  clean folder, or just the dependency/config/docs into an existing one) and
+  writes an agent-agnostic `AGENTS.md` section (plain shell/curl
+  instructions) instead of a tool-specific skill file — see README
+  "Scaffolding a new project". Packaged agent skills was the one
+  PROJECT_VISION.md roadmap item still fully open; this is the first cut of
+  it, intentionally agent-agnostic rather than tied to one coding tool.
 
 ## Validation
 
@@ -61,6 +86,11 @@ npm.cmd run example:test
 
 - Refresh the example after restarting Vite; linked `cadbea` source can remain
   stale in Vite's optimized dependency cache.
+- A project using `cadbea/ui` needs the extra `optimizeDeps.include`
+  (`react-dom/client`, `three`) and `optimizeDeps.exclude` (`cadbea`) entries
+  documented in the README — without them, either `createRoot` fails at
+  runtime or you get a duplicate Three.js instance. Both were hit for real
+  migrating `example/gc-cad`, not precautionary.
 - The bridge runs with `npm.cmd run bridge` on `http://127.0.0.1:8787`; use
   `?reviewWebhook=http%3A%2F%2F127.0.0.1%3A8787%2Freview` on the example URL.
 - Browser reviews arrive as `annotation-added` events with focused-area

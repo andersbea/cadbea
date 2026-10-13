@@ -16,15 +16,21 @@ serializable `window.__cadbeaViewer.getReviewState()` result.
 A small, project-agnostic toolkit for reviewing a parametric CAD model built
 with three.js (written for [replicad](https://replicad.xyz/) projects, but
 not coupled to replicad specifically — anything that puts meshes into a
-three.js scene works). Three pieces:
+three.js scene works), built around a person marking up the model in the
+browser and an AI coding agent acting on those comments. The pieces:
 
 1. **`src/viewer.js`** — a generic viewer bootstrap (scene, camera, controls,
    lighting) plus bounding-box-derived standard camera views, so you don't
    hand-tune camera coordinates per project.
-2. **`capture/`** — a Playwright-based CLI that drives that viewer headlessly
+2. **`src/ui/`** (`cadbea/ui`) — the shared review chrome (topbar, review
+   panel, theming, model loader) built on that engine. See "UI kit" below.
+3. **`bridge/`** — a small standalone HTTP server a viewer's review events
+   POST to, so a comment reaches a coding agent (any agent — see "Scaffolding
+   a new project" just below) instead of sitting only in the browser tab.
+4. **`capture/`** — a Playwright-based CLI that drives the viewer headlessly
    to produce screenshots and multi-angle "contact sheet" grids, for a human
    or an AI agent to actually look at before calling a model change done.
-3. **`capture/check.mjs`** — a deterministic watertightness check on the
+5. **`capture/check.mjs`** — a deterministic watertightness check on the
    actual tessellated mesh, for catching (or ruling out) a real geometric gap
    without relying on judging it from a picture. See "Deterministic geometry
    checks" below — this exists because a screenshot review session on this
@@ -36,6 +42,35 @@ Extracted from `gc-cad/replicad` in the guardianchain-labs project once it
 became clear the viewer/capture code had no enclosure-specific logic in it —
 the only project-specific things were hand-typed camera coordinates, which
 are now derived live from the model's own bounding box instead.
+
+## Scaffolding a new project
+
+Install `cadbea` globally (or keep it as a local dependency and run
+`npx cadbea-init`), then run `cadbea-init` in any folder:
+
+```bash
+npm install -g cadbea      # or: npm install cadbea, then npx cadbea-init
+cadbea-init                # scaffold + npm install; --no-install to skip the install
+```
+
+- **Clean/empty folder** (no `package.json` yet): writes a complete turnkey
+  review app — `package.json`, `vite.config.mjs` (with `reviewBridgePlugin()`
+  already wired in), `index.html`, `src/main.jsx` using `cadbea/ui`'s
+  zero-code `mountCadbeaApp()` — then runs `npm install`. `npm run dev`
+  afterward brings up the viewer and the review bridge together.
+- **Existing project** (a `package.json` is already there): your app code is
+  left alone. It only adds the `cadbea` dependency, a default
+  `cadbea.config.mjs`, and the AGENTS.md section below — printing the exact
+  `reviewBridgePlugin()` wiring to add to your own Vite config yourself,
+  since auto-editing an arbitrary existing config isn't safe to do blindly.
+
+Either way, it writes (or appends to) **`AGENTS.md`** with instructions for
+starting a review session and listening for comments — written for *any*
+coding agent working through a shell (plain `curl`/`grep` against the
+bridge's SSE stream or its plain `/events` history endpoint), not tied to one
+agent's specific tool for backgrounding a process or getting notified. Point
+whichever agent you're using at that file. Re-running `cadbea-init` is
+idempotent — it skips anything already in place.
 
 ## Why a contact sheet, not just the interactive viewer
 
@@ -189,10 +224,20 @@ polling defaults to every five seconds and reports `connected`, `disconnected`,
 The bundled bridge also exposes `GET /events/stream` as a Server-Sent Events
 feed for AI adapters that should react immediately to new browser reviews;
 `GET /events` remains available for history and recovery after reconnects.
+Both are agent-agnostic — any agent that can run shell commands can `curl`
+one or the other; see "Scaffolding a new project" below for the exact
+instructions this package hands an agent (not tied to any particular tool).
 
-The gc-cad example starts the bridge automatically with `npm run example:dev`
-and connects to `http://127.0.0.1:8787/review` by default. A healthy existing
-bridge is reused. Override the endpoint with `?reviewWebhook=…`.
+A consumer's Vite project starts the bridge automatically by adding
+`reviewBridgePlugin()` (from `cadbea/bridge/vite-plugin`, a real package
+export — not a relative path into `cadbea`'s own source tree) to its
+`plugins` array, the way `example/gc-cad` and a `cadbea-init`-scaffolded
+project both do. A healthy existing bridge is reused rather than double
+started. You can also run the bridge as a standalone process with the
+`cadbea-bridge` bin (equivalent to the repo-root `npm run bridge` script),
+useful when pointing more than one consumer project at one shared bridge.
+Connect a viewer to it with `reviewWebhook: 'http://127.0.0.1:8787/review'`
+(or override via `?reviewWebhook=…` on the page URL).
 When started from Codex, the bridge uses `CODEX_THREAD_ID` to queue new comments
 in that conversation with `codex queue`. Set `CADBEA_CODEX_THREAD` to target a
 specific conversation when starting from another terminal. The Codex CLI must
@@ -217,6 +262,17 @@ The viewer persists the last camera position, orbit target, and zoom in
 `localStorage`, so a refresh after an AI model adjustment keeps the user's
 view. Override the key with `cameraStorageKey`, or pass `false` to disable
 persistence.
+
+It also persists the active named state (whichever key of `viewer.states` was
+last turned on — `exploded`, `section`, whatever a project declares) the same
+way, under a separate `stateStorageKey` (same default/override/`false`
+pattern). Restoring it happens lazily the first time a project assigns
+`viewer.states = {...}`, and only if the saved name is still one of the keys
+in that assignment — so switching to a model/project that doesn't declare the
+previously-saved state name is a no-op, not an error. Annotations are not
+persisted (kept in memory only, per the contract below); a full page reload
+— including one Vite triggers on its own after an edit outside any Fast
+Refresh boundary — clears them even though camera and state survive it.
 
 ### Standard views
 
@@ -351,6 +407,154 @@ And wire up npm scripts pointing at wherever you placed this toolkit:
     "check": "node ../../cadbea/capture/check.mjs"
   }
 }
+```
+
+## UI kit (`cadbea/ui`)
+
+The setup above gets you the bare rendering/selection engine with no visible
+chrome — you'd still have to hand-build a topbar, review panel, annotation
+UI, and bridge-status indicator yourself. `cadbea/ui` is that chrome, shipped
+as React components (raw JSX source, consumed the same way `cadbea`'s own
+`src/viewer.js` is — no build step inside this package, your bundler
+processes it). Two ways to use it:
+
+**Turnkey** — for reviewing an already-exported model with no project code
+at all:
+
+```jsx
+// main.jsx
+import 'cadbea/ui/style.css'
+import { mountCadbeaApp } from 'cadbea/ui'
+
+mountCadbeaApp(document.getElementById('root'))
+```
+
+This creates its own canvas and viewer and shows a drag-and-drop/file-picker
+loader (`.glb`, `.gltf`, `.stl`) — see `example/file-viewer` for a complete
+minimal app.
+
+**Embedded** — for a project that builds its own model (like `example/gc-cad`):
+create the viewer and geometry exactly as in "Project setup" above, then
+render the shared chrome around it instead of hand-rolling a topbar/review
+panel:
+
+```jsx
+import 'cadbea/ui/style.css'
+import { createRoot } from 'react-dom/client'
+import { CadbeaApp, Button } from 'cadbea/ui'
+
+// ... createViewer(), addThreeGeometry(), viewer.states = {...} as before ...
+
+createRoot(document.getElementById('app-root')).render(
+  <CadbeaApp viewer={viewer} status={status}>
+    <Button active={exploded} onClick={toggleExploded}>Exploded view</Button>
+  </CadbeaApp>
+)
+```
+
+The model loader is hidden automatically when a `viewer` is passed in (a
+model already exists); pass `showLoader` to override. `window.__cadbeaViewer`
+is always set by `CadbeaApp`, but `viewer.ready` is **not** auto-set for an
+embedded viewer — set it yourself once your own async build finishes, exactly
+as the bare-engine contract already requires; `capture`/`check`/`bridge` need
+no changes either way; they only look at `window.__cadbeaViewer` and don't
+know or care which integration pattern a project uses.
+
+Custom per-state buttons with their own animation (like an exploded-lid
+lift) stay hand-authored, passed as `<CadbeaApp>` children — a
+`StatesToolbar` component is also exported for the simpler case of a project
+with no custom animation that just wants one toggle button per
+`Object.keys(viewer.states)`.
+
+The toolbar `CadbeaApp` builds in the topbar, left to right: a built-in
+`SelectionModeToggle` (part-click vs. area-drag, icon-only), then your own
+`children` (e.g. a project's explode/section controls), then a built-in
+`DownloadPrintFilesButton` (icon-only; renders nothing if the project
+configured neither `printBundle` nor `printFiles`), then `ThemeToggle`. The
+bridge-connection pill renders separately, fixed to the bottom-right corner,
+out of the toolbar's way. `renderPrintFiles(container)` (see the contract
+above) still exists for a hand-rolled chrome that wants the fuller labeled
+card instead of the icon button.
+
+### Theming
+
+`cadbea/ui/style.css` defines its design tokens as CSS custom properties
+(`--cadbea-*`) with a light default, a `prefers-color-scheme: dark` override,
+and an explicit `[data-theme="dark"]`/`[data-theme="light"]` override that
+wins either direction — `CadbeaApp` wraps everything in a `ThemeProvider`
+automatically, and a `ThemeToggle` button (cycling system/light/dark) is
+included in the topbar. Add a fully custom theme at runtime with
+`useTheme()`:
+
+```jsx
+import { useTheme } from 'cadbea/ui'
+
+const { registerTheme } = useTheme()
+registerTheme('brand', { '--cadbea-accent': '#7c3aed', '--cadbea-bg': '#0b0b12' })
+```
+
+Registered custom themes persist to `localStorage` and are available in the
+`ThemeToggle` cycle immediately, in the same session and after a reload.
+
+### Generic model loading
+
+`loadModelFile(file, viewer)` (exported from the plain `cadbea` engine, not
+`cadbea/ui` — it has no React dependency) loads a `.glb`, `.gltf`, or `.stl`
+`File` into `viewer.modelGroup`, tagged and edge-lined the same way
+`addThreeGeometry()` tags a part, so it's selectable and covered by
+`checkGeometry()` like any other part. `cadbea/ui`'s `ModelLoader` component
+(included automatically in turnkey mode) is a thin drag-and-drop/file-input
+wrapper around it. STEP is not supported — it needs an OpenCascade/wasm
+importer, a much heavier dependency than this generic loader is meant to
+carry.
+
+### Shared components
+
+`Button`, `Panel`, `Pill`, `Field`, and `ToggleButtonGroup` (an exclusive,
+segmented strip of icon options — one active at a time, the MUI
+`ToggleButtonGroup` pattern — used by `SelectionModeToggle` and by gc-cad's
+own explode/section controls) are the primitives every piece of `cadbea/ui`
+chrome is built from (one `Button` with a `variant` prop —
+`default`/`primary`/`ghost`/`danger` — instead of a different bespoke button
+per place it's used) — reuse them for any additional controls you add
+alongside `<CadbeaApp>` so a project's own buttons look consistent with the
+shared chrome. `cadbea/ui` ships its own small set of dependency-free inline
+SVG icons for its built-in controls rather than depending on an icon
+library — bring your own (lucide-react, or anything else) for project-level
+controls, as gc-cad does.
+
+### Additional Vite setup for `cadbea/ui`
+
+On top of the `preserveSymlinks` requirement above, a project using
+`cadbea/ui` needs `@vitejs/plugin-react` and two more `optimizeDeps` entries
+— both are real gotchas hit building `example/gc-cad`, not precautionary:
+
+```ts
+// vite.config.ts
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  resolve: { preserveSymlinks: true, dedupe: ['three', 'react', 'react-dom'] },
+  optimizeDeps: {
+    // Without this, react-dom/client — imported only through cadbea/ui, a
+    // symlinked/unbundled package — gets served as raw, un-converted CJS,
+    // and the named `createRoot` import fails at runtime. Vite's dependency
+    // scanner doesn't reliably discover a deep subpath import reached only
+    // through a linked package.
+    include: ['react', 'react-dom', 'react-dom/client', 'three'],
+    // Once cadbea/ui (JSX) gives Vite's scanner a reason to treat the whole
+    // `cadbea` package as an optimizable dependency, esbuild's pre-bundle
+    // step will inline its own private copy of `three` into that chunk
+    // instead of sharing your project's instance — a second "Multiple
+    // instances of Three.js" case, distinct from (and in addition to) the
+    // dedupe/preserveSymlinks one above. Excluding `cadbea` keeps it served
+    // as raw, live-reloadable source, and forcing `three` into `include`
+    // gives it one canonical shared instance across every other optimized
+    // chunk that reaches it (react-dom, replicad-threejs-helper, ...).
+    exclude: ['cadbea'],
+  },
+})
 ```
 
 ## Usage
