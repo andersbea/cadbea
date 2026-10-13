@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
